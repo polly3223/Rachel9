@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Environment
+.env
+
+# Bun lock
+bun.lock
+
+# Build output
+dist/
+
+# Logs
+*.log
+
+# SQLite databases and WAL files
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+
+# Internal planning docs
+.planning/
