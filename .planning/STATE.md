@@ -2,15 +2,15 @@
 
 ## Current Phase
 
-**Phase:** Phase 1 complete — ready for Phase 2
-**Status:** Foundation built, all CORE requirements satisfied
+**Phase:** Phase 2 complete — ready for Phase 3
+**Status:** Agent core built with pi-mono integration, 10 tools registered
 
 ## Progress
 
 | Phase | Status | Notes |
 |-------|--------|-------|
 | Phase 1: Foundation | ✅ Complete | CORE-01 through CORE-07 implemented |
-| Phase 2: Agent Core | ⬜ Not started | — |
+| Phase 2: Agent Core | ✅ Complete | AGENT-01 through AGENT-11, AGENT-14. 10 tools, Z.ai GLM-5 |
 | Phase 3: Telegram Transport | ⬜ Not started | — |
 | Phase 4: Memory & Persistence | ⬜ Not started | — |
 | Phase 5: Tasks & Media | ⬜ Not started | — |
@@ -28,10 +28,12 @@
 | Fresh codebase | 2026-02-19 | Clean architecture, avoid tech debt |
 | Standard+ depth planning | 2026-02-19 | 8 phases, comprehensive research |
 | Deploy after Phase 5 for testing | 2026-02-19 | Slow rollout in Lorenzo's container |
+| Z.ai uses openai-completions API | 2026-02-20 | Not Anthropic format — pi-ai handles it natively |
+| createCodingTools + individual creators | 2026-02-20 | createAllTools not in npm published version |
 
 ## Blockers
 
 None currently.
 
 ---
-*Last updated: 2026-02-20 (Phase 1 complete)*
+*Last updated: 2026-02-20 (Phase 2 complete)*
