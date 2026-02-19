@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase:** Phase 2 complete — ready for Phase 3
-**Status:** Agent core built with pi-mono integration, 10 tools registered
+**Phase:** Phase 3 complete — ready for Phase 4
+**Status:** Bot responds to text messages with streamed AI responses + tool calling
 
 ## Progress
 
@@ -11,7 +11,7 @@
 |-------|--------|-------|
 | Phase 1: Foundation | ✅ Complete | CORE-01 through CORE-07 implemented |
 | Phase 2: Agent Core | ✅ Complete | AGENT-01 through AGENT-11, AGENT-14. 10 tools, Z.ai GLM-5 |
-| Phase 3: Telegram Transport | ⬜ Not started | — |
+| Phase 3: Telegram Transport | ✅ Complete | TG-01, TG-10 to TG-15. Streaming, auth, queue |
 | Phase 4: Memory & Persistence | ⬜ Not started | — |
 | Phase 5: Tasks & Media | ⬜ Not started | — |
 | Phase 6: WhatsApp & Skills | ⬜ Not started | — |
@@ -36,4 +36,4 @@
 None currently.
 
 ---
-*Last updated: 2026-02-20 (Phase 2 complete)*
+*Last updated: 2026-02-20 (Phase 3 complete)*
