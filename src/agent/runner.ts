@@ -1,0 +1,248 @@
+import { Agent, type AgentEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
+import { getModel } from "@mariozechner/pi-ai";
+import type { Message } from "@mariozechner/pi-ai";
+import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
+import { join } from "node:path";
+import { mkdirSync, existsSync } from "node:fs";
+import { env } from "../config/env.ts";
+import { logger } from "../lib/logger.ts";
+import { errorMessage } from "../lib/errors.ts";
+import { buildSystemPrompt } from "./system-prompt.ts";
+import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
+
+// Z.ai GLM-5 via pi-ai model registry
+const DEFAULT_MODEL = getModel("zai", "glm-5");
+
+export interface AgentRunnerOptions {
+  chatId: number;
+  toolDeps: ToolDependencies;
+}
+
+export interface PromptResult {
+  response: string;
+  toolsUsed: string[];
+}
+
+export type AgentEventCallback = (event: AgentEvent) => void;
+
+export class AgentRunner {
+  readonly chatId: number;
+  private agent: Agent;
+  private sessionManager: SessionManager;
+  private eventCallbacks: AgentEventCallback[] = [];
+  private lastPersistedCount = 0;
+
+  constructor(opts: AgentRunnerOptions) {
+    this.chatId = opts.chatId;
+
+    // Session directory: $SHARED_FOLDER_PATH/rachel9/sessions/<chatId>/
+    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(opts.chatId));
+    if (!existsSync(sessionDir)) {
+      mkdirSync(sessionDir, { recursive: true });
+    }
+
+    // Create session manager
+    const contextFile = join(sessionDir, "context.jsonl");
+    this.sessionManager = SessionManager.open(contextFile, sessionDir);
+
+    // Create tools
+    const tools = createAgentTools(opts.toolDeps);
+
+    // Create agent
+    this.agent = new Agent({
+      initialState: {
+        systemPrompt: buildSystemPrompt(),
+        model: DEFAULT_MODEL,
+        thinkingLevel: "off",
+        tools,
+      },
+      convertToLlm,
+      getApiKey: async (provider: string) => {
+        if (provider === "zai") return env.ZAI_API_KEY;
+        // Support Anthropic fallback for multi-provider future
+        if (provider === "anthropic") return Bun.env["ANTHROPIC_API_KEY"] ?? undefined;
+        return undefined;
+      },
+    });
+
+    // Load existing session messages
+    const loaded = this.sessionManager.buildSessionContext();
+    if (loaded.messages.length > 0) {
+      this.agent.replaceMessages(loaded.messages);
+      this.lastPersistedCount = loaded.messages.length;
+      logger.debug("Loaded session", { chatId: opts.chatId, messageCount: loaded.messages.length });
+    }
+
+    // Wire up event forwarding
+    this.agent.subscribe((event: AgentEvent) => {
+      for (const cb of this.eventCallbacks) {
+        try {
+          cb(event);
+        } catch (err) {
+          logger.error("Event callback error", { error: errorMessage(err) });
+        }
+      }
+    });
+
+    logger.info("AgentRunner created", { chatId: opts.chatId });
+  }
+
+  /**
+   * Subscribe to agent events (streaming, tool execution, etc.)
+   * Returns unsubscribe function.
+   */
+  onEvent(callback: AgentEventCallback): () => void {
+    this.eventCallbacks.push(callback);
+    return () => {
+      const idx = this.eventCallbacks.indexOf(callback);
+      if (idx >= 0) this.eventCallbacks.splice(idx, 1);
+    };
+  }
+
+  /**
+   * Send a message to the agent and get a response.
+   * Handles session persistence, system prompt refresh, and error recovery.
+   */
+  async prompt(text: string): Promise<PromptResult> {
+    // Refresh system prompt (memory might have changed)
+    this.agent.setSystemPrompt(buildSystemPrompt());
+
+    const toolsUsed: string[] = [];
+
+    // Track tools used during this prompt
+    const unsub = this.agent.subscribe((event: AgentEvent) => {
+      if (event.type === "tool_execution_end") {
+        toolsUsed.push(event.toolName);
+      }
+    });
+
+    try {
+      // Run agent
+      await this.agent.prompt(text);
+
+      // Extract response text from last assistant message
+      const messages = this.agent.state.messages;
+      const lastAssistant = [...messages].reverse().find((m: AgentMessage) => m.role === "assistant");
+      const response = lastAssistant
+        ? lastAssistant.content
+            .filter((c): c is { type: "text"; text: string } => c.type === "text")
+            .map((c) => c.text)
+            .join("\n")
+        : "(No response)";
+
+      // Persist session
+      this.persistSession();
+
+      return { response, toolsUsed };
+    } catch (err) {
+      const msg = errorMessage(err);
+      logger.error("Agent prompt error", { chatId: this.chatId, error: msg });
+
+      // Check for context overflow
+      if (this.isContextOverflow(msg)) {
+        logger.warn("Context overflow detected, resetting session", { chatId: this.chatId });
+        return this.handleContextOverflow(text);
+      }
+
+      throw err;
+    } finally {
+      unsub();
+    }
+  }
+
+  /**
+   * Check if an error indicates context overflow.
+   */
+  private isContextOverflow(error: string): boolean {
+    const patterns = [
+      "prompt is too long",
+      "too many tokens",
+      "context length",
+      "request too large",
+      "maximum context",
+      "token limit",
+    ];
+    const lower = error.toLowerCase();
+    return patterns.some((p) => lower.includes(p));
+  }
+
+  /**
+   * Handle context overflow: clear messages, create fresh session, retry.
+   */
+  private async handleContextOverflow(originalText: string): Promise<PromptResult> {
+    // Clear agent messages
+    this.agent.clearMessages();
+
+    // Create new session
+    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(this.chatId));
+    const contextFile = join(sessionDir, "context.jsonl");
+    this.sessionManager = SessionManager.open(contextFile, sessionDir);
+
+    const recoveryMessage = `[System: Previous conversation context was too large and has been reset. Your memory files (MEMORY.md, context/, daily-logs/) are intact. The user's original message follows.]\n\n${originalText}`;
+
+    try {
+      await this.agent.prompt(recoveryMessage);
+
+      const messages = this.agent.state.messages;
+      const lastAssistant = [...messages].reverse().find((m: AgentMessage) => m.role === "assistant");
+      const response = lastAssistant
+        ? lastAssistant.content
+            .filter((c): c is { type: "text"; text: string } => c.type === "text")
+            .map((c) => c.text)
+            .join("\n")
+        : "(No response after context reset)";
+
+      this.persistSession();
+      return { response, toolsUsed: [] };
+    } catch (retryErr) {
+      logger.error("Failed even after context reset", { error: errorMessage(retryErr) });
+      return {
+        response: "I encountered an error and couldn't recover. Please try again.",
+        toolsUsed: [],
+      };
+    }
+  }
+
+  /**
+   * Persist new agent messages to context.jsonl via SessionManager.
+   * SessionManager auto-writes to disk on appendMessage().
+   */
+  private persistSession(): void {
+    try {
+      const messages = this.agent.state.messages;
+      const newMessages = messages.slice(this.lastPersistedCount);
+
+      for (const msg of newMessages) {
+        // SessionManager.appendMessage expects pi-ai Message type
+        // AgentMessage is compatible — both have role + content
+        this.sessionManager.appendMessage(msg as unknown as Message);
+      }
+
+      this.lastPersistedCount = messages.length;
+      logger.debug("Session persisted", { chatId: this.chatId, newMessages: newMessages.length });
+    } catch (err) {
+      logger.warn("Failed to persist session", { chatId: this.chatId, error: errorMessage(err) });
+    }
+  }
+
+  /**
+   * Get the current model name.
+   */
+  get modelName(): string {
+    return this.agent.state.model?.name ?? "unknown";
+  }
+
+  /**
+   * Get current message count.
+   */
+  get messageCount(): number {
+    return this.agent.state.messages.length;
+  }
+
+  /**
+   * Check if agent is currently streaming.
+   */
+  get isStreaming(): boolean {
+    return this.agent.state.isStreaming;
+  }
+}

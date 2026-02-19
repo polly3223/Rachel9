@@ -17,6 +17,9 @@ export const envSchema = z.object({
     .enum(["development", "production", "test"])
     .default("production"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  ZAI_API_KEY: z.string().min(1, {
+    message: "Z.ai API key required. Get from Z.ai Pro dashboard",
+  }),
 });
 
 export type Env = z.infer<typeof envSchema>;

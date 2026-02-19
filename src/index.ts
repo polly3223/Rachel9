@@ -1,13 +1,34 @@
 import { bot } from "./telegram/bot.ts";
+import { InputFile } from "grammy";
 import { env } from "./config/env.ts";
 import { logger } from "./lib/logger.ts";
 import { db } from "./lib/database.ts";
 import { errorMessage } from "./lib/errors.ts";
+import { initAgentSystem } from "./agent/index.ts";
 
 logger.info("Rachel9 starting...", { env: env.NODE_ENV });
 logger.info("Configuration loaded", {
   sharedFolder: env.SHARED_FOLDER_PATH,
   logLevel: env.LOG_LEVEL,
+});
+
+// ---------------------------------------------------------------------------
+// Initialize agent system
+// ---------------------------------------------------------------------------
+initAgentSystem({
+  cwd: process.cwd(),
+  sendFile: async (filePath: string, caption?: string) => {
+    const file = Bun.file(filePath);
+    if (await file.exists()) {
+      const fileName = filePath.split("/").pop() ?? "file";
+      const buffer = await file.arrayBuffer();
+      await bot.api.sendDocument(
+        env.OWNER_TELEGRAM_USER_ID,
+        new InputFile(new Uint8Array(buffer), fileName),
+        caption ? { caption } : undefined,
+      );
+    }
+  },
 });
 
 // ---------------------------------------------------------------------------
