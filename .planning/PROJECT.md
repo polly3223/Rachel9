@@ -20,12 +20,25 @@ A personal AI assistant that lives on Telegram, can do anything on the machine i
 
 - **Runtime**: Bun (TypeScript)
 - **Agent Framework**: @mariozechner/pi-agent-core (Agent class, tool calling, events)
+- **Coding Agent SDK**: @mariozechner/pi-coding-agent (battle-tested tools, session management, compaction, skills)
 - **LLM API**: @mariozechner/pi-ai (unified multi-provider API)
 - **Primary LLM**: Z.ai (GLM-5) via pi-ai's provider system, with ability to switch to any supported provider
 - **Telegram**: grammY (keep from Rachel8 — battle-tested)
 - **WhatsApp**: Baileys (keep from Rachel8)
 - **Database**: SQLite via bun:sqlite (keep from Rachel8)
 - **STT**: Groq Whisper / OpenAI Whisper (keep from Rachel8)
+
+### Why pi-coding-agent
+
+The coding-agent SDK provides production-grade implementations we'd otherwise build from scratch:
+- `createCodingTools(cwd)` — 7 tools (bash, read, write, edit, find, grep, ls) with proper truncation, error handling, output limiting
+- `SessionManager` — JSONL session persistence with migration support
+- `compact()` / `shouldCompact()` — automatic context compaction with summarization
+- `loadSkills()` — skills system with frontmatter parsing
+- `convertToLlm()` — message format conversion
+- `AuthStorage` — API key management per provider
+
+This means Rachel9 inherits world-class coding capabilities out of the box. Regular business users can ask Rachel to build whole websites, financial scripts, data analysis — Rachel ships it without them needing to know how to code.
 
 ## Architecture Decisions
 

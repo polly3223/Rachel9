@@ -31,18 +31,18 @@
 ### AI Agent (AGENT)
 - [ ] **AGENT-01**: pi-agent-core Agent class integration with tool calling
 - [ ] **AGENT-02**: pi-ai unified LLM API with Z.ai as default provider
-- [ ] **AGENT-03**: Tool: Bash command execution (unrestricted, with timeout)
-- [ ] **AGENT-04**: Tool: File read (any file on system)
-- [ ] **AGENT-05**: Tool: File write (create/overwrite files)
-- [ ] **AGENT-06**: Tool: File edit (targeted string replacement)
-- [ ] **AGENT-07**: Tool: Web search
-- [ ] **AGENT-08**: Tool: Web fetch (URL content extraction)
-- [ ] **AGENT-09**: Tool: Telegram send file (from agent context)
-- [ ] **AGENT-10**: System prompt with memory injection (MEMORY.md content appended)
-- [ ] **AGENT-11**: Session persistence (context.jsonl per chat, survives restarts)
-- [ ] **AGENT-12**: Context overflow recovery (detect overflow, reset session, retry with notice)
-- [ ] **AGENT-13**: Agent event subscriptions for streaming and tool status
-- [ ] **AGENT-14**: Multi-turn conversations with full message history
+- [ ] **AGENT-03**: pi-coding-agent tools via createCodingTools() — bash, read, write, edit, find, grep, ls
+- [ ] **AGENT-04**: Tool: Web search (custom tool)
+- [ ] **AGENT-05**: Tool: Web fetch (custom tool, URL content extraction)
+- [ ] **AGENT-06**: Tool: Telegram send file (custom tool, from agent context)
+- [ ] **AGENT-07**: System prompt with memory injection (MEMORY.md content appended)
+- [ ] **AGENT-08**: SessionManager from pi-coding-agent for session persistence (context.jsonl)
+- [ ] **AGENT-09**: Context compaction via pi-coding-agent compact() — automatic summarization
+- [ ] **AGENT-10**: Context overflow recovery (detect overflow, reset session, retry with notice)
+- [ ] **AGENT-11**: Agent event subscriptions for streaming and tool status
+- [ ] **AGENT-12**: Multi-turn conversations with full message history
+- [ ] **AGENT-13**: Skills system via pi-coding-agent loadSkills() — load from skills/ directory
+- [ ] **AGENT-14**: Rachel should be exceptional at coding — ship websites, Python scripts, full projects with minimal user guidance
 
 ### Memory System (MEM)
 - [ ] **MEM-01**: MEMORY.md loading (core facts injected into system prompt every query)
