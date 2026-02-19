@@ -2,22 +2,22 @@ import { Bot, type Context, GrammyError, HttpError } from "grammy";
 import { autoChatAction, type AutoChatActionFlavor } from "@grammyjs/auto-chat-action";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
+import { authGuard } from "./middleware/auth.ts";
+import { handleTextMessage } from "./handlers/message.ts";
 
 export type BotContext = Context & AutoChatActionFlavor;
 
 export const bot = new Bot<BotContext>(env.TELEGRAM_BOT_TOKEN);
 
-// Middleware
+// Middleware (order matters: auth first, then typing indicator)
+bot.use(authGuard);
 bot.use(autoChatAction());
 
 // Commands
 bot.command("start", (ctx) => ctx.reply("Hello! I'm Rachel, your personal AI assistant."));
 
-// Message handlers (placeholder -- real handlers added in later phases)
-bot.on("message:text", async (ctx) => {
-  logger.debug("Received text message", { text: ctx.message.text, from: ctx.from?.id });
-  await ctx.reply("I heard you! (Rachel9 is still being set up)");
-});
+// Message handlers
+bot.on("message:text", handleTextMessage);
 
 // Error handler
 function formatBotError(e: unknown): string {
