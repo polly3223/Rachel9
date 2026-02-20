@@ -8,15 +8,18 @@
     "test": "bun test"
   },
   "dependencies": {
-    "grammy": "^1.40.0",
     "@grammyjs/auto-chat-action": "^0.1.1",
-    "zod": "^4.3.6",
     "@mariozechner/pi-agent-core": "^0.53.1",
     "@mariozechner/pi-ai": "^0.53.1",
     "@mariozechner/pi-coding-agent": "^0.53.1",
-    "@sinclair/typebox": "^0.34.48"
+    "@sinclair/typebox": "^0.34.48",
+    "baileys": "^7.0.0-rc.9",
+    "grammy": "^1.40.0",
+    "qrcode": "^1.5.4",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "@types/qrcode": "^1.5.6"
   }
 }

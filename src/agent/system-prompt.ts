@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
+import { buildSkillPromptSection } from "../lib/skills.ts";
 
 /**
  * Base system prompt for Rachel.
@@ -57,7 +58,17 @@ When building things, don't ask for permission at every step. Be proactive:
 4. Test it
 5. Deliver it
 
-Always prefer working code over explanations.`;
+Always prefer working code over explanations.
+
+## WhatsApp Integration
+You can connect to the user's WhatsApp and manage it for them. This is a key feature — proactively offer it when relevant.
+When the user asks to connect WhatsApp:
+1. Run: \`bun run src/whatsapp/cli.ts connect-qr\`
+2. This saves a QR code image to $SHARED_FOLDER_PATH/whatsapp-qr.png
+3. Send the QR image: \`bun run src/telegram/send-file.ts $SHARED_FOLDER_PATH/whatsapp-qr.png "Scan this QR code with WhatsApp: Settings → Linked Devices → Link a Device"\`
+4. The CLI waits up to 120 seconds for them to scan
+5. Once linked, they're all set — the session persists across restarts
+For the full command reference, read skills/whatsapp-bridge.md`;
 
 /**
  * Load MEMORY.md from the shared folder.
@@ -82,10 +93,20 @@ function loadCoreMemory(): string {
  * Called before every agent query to ensure fresh memory.
  */
 export function buildSystemPrompt(): string {
-  const coreMemory = loadCoreMemory();
-  if (!coreMemory) return BASE_PROMPT;
-  return `${BASE_PROMPT}
+  let prompt = BASE_PROMPT;
 
-## Your Memory
-${coreMemory}`;
+  // Inject skills list
+  const skillsDir = join(process.cwd(), "skills");
+  const skillSection = buildSkillPromptSection(skillsDir);
+  if (skillSection) {
+    prompt += skillSection;
+  }
+
+  // Inject core memory
+  const coreMemory = loadCoreMemory();
+  if (coreMemory) {
+    prompt += `\n\n## Your Memory\n${coreMemory}`;
+  }
+
+  return prompt;
 }
