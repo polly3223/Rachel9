@@ -38,9 +38,10 @@ export async function processAgentPrompt(
   logText?: string,
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
-    ctx.chatAction = "typing";
-
     try {
+      // Show typing indicator immediately — before anything else
+      await ctx.api.sendChatAction(chatId, "typing");
+
       // Log user message to daily log (fire-and-forget)
       void appendToDailyLog("user", logText ?? prompt);
 
