@@ -9,19 +9,105 @@ import { errorMessage } from "../../lib/errors.ts";
 import { appendToDailyLog } from "../../lib/memory.ts";
 import { CONSTANTS } from "../../config/constants.ts";
 
-/** Interval for refreshing the "typing" indicator (Telegram expires it after ~5s). */
-const TYPING_INTERVAL_MS = 4000;
+// ---------------------------------------------------------------------------
+// Typing indicator
+// ---------------------------------------------------------------------------
 
 /**
- * Start a self-managed typing indicator loop.
- * Returns a stop function. Sends immediately, then every 4s.
+ * Interval for refreshing the "typing" indicator.
+ * Telegram's typing indicator expires after ~5s, so we resend every 4s.
+ *
+ * Why self-managed instead of @grammyjs/auto-chat-action?
+ * The plugin ties its lifecycle to grammY's middleware chain. In Rachel9,
+ * message processing runs inside enqueueForChat() — a queued callback that
+ * is NOT part of the middleware chain. The plugin's finally-block cleanup
+ * fires when the middleware returns, which is decoupled from when our queue
+ * callback finishes. This caused two bugs:
+ * - Typing indicator lingering after the response was sent
+ * - Typing indicator not showing at all (middleware returned before queue ran)
+ *
+ * The self-managed loop gives us precise control: start immediately when
+ * processing begins, stop the instant the agent finishes (before sending
+ * the final message). No framework timing issues.
  */
+const TYPING_INTERVAL_MS = 4000;
+
 function startTypingLoop(api: Api, chatId: number): () => void {
   const send = () => { void api.sendChatAction(chatId, "typing").catch(() => {}); };
-  send(); // fire immediately
+  send();
   const interval = setInterval(send, TYPING_INTERVAL_MS);
   return () => clearInterval(interval);
 }
+
+// ---------------------------------------------------------------------------
+// Streaming message manager
+// ---------------------------------------------------------------------------
+
+/**
+ * Manages the single streaming message during agent response.
+ *
+ * Why this exists: Without a placeholder message, we send a new message on
+ * the first streaming chunk and edit it on subsequent chunks. But events
+ * fire rapidly (message_update, tool_execution_start) and doStreamUpdate is
+ * async. If two events fire before the first sendFormattedMessage resolves,
+ * both see messageId=null and both try to send a new message → duplicates.
+ *
+ * This class serializes all updates through a promise chain, ensuring only
+ * one message is ever created, and subsequent updates wait for it.
+ */
+class StreamingMessage {
+  private messageId: number | null = null;
+  private pending: Promise<void> = Promise.resolve();
+  private creating = false;
+
+  constructor(
+    private api: Api,
+    private chatId: number,
+  ) {}
+
+  /**
+   * Queue a streaming update. If no message exists yet, creates one.
+   * All calls are serialized — no duplicate messages possible.
+   */
+  update(text: string): void {
+    this.pending = this.pending.then(() => this.doUpdate(text)).catch(() => {});
+  }
+
+  private async doUpdate(text: string): Promise<void> {
+    const truncated = text.length > CONSTANTS.STREAM_EDIT_TRUNCATE
+      ? text.slice(0, CONSTANTS.STREAM_EDIT_TRUNCATE) + "\n\n_... (streaming)_"
+      : text;
+
+    if (this.messageId === null && !this.creating) {
+      // First chunk — send a new message
+      this.creating = true;
+      try {
+        this.messageId = await sendFormattedMessage(this.api, this.chatId, truncated);
+      } finally {
+        this.creating = false;
+      }
+    } else if (this.messageId !== null) {
+      // Subsequent chunks — edit existing
+      await editFormattedMessage(this.api, this.chatId, this.messageId, truncated);
+    }
+    // If creating is true but messageId is null, we're mid-creation — skip
+    // (the next queued update will catch up with the latest text)
+  }
+
+  /** Wait for all pending updates to finish. */
+  async flush(): Promise<void> {
+    await this.pending;
+  }
+
+  /** Get the current message ID (may be null if no text was streamed). */
+  getId(): number | null {
+    return this.messageId;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Handlers
+// ---------------------------------------------------------------------------
 
 /**
  * Handle incoming text messages.
@@ -40,6 +126,14 @@ export async function handleTextMessage(ctx: BotContext): Promise<void> {
  * Shared streaming agent prompt handler.
  * Used by both text and media handlers.
  *
+ * Flow:
+ * 1. Start typing indicator loop (every 4s)
+ * 2. Subscribe to agent events for streaming
+ * 3. On first text chunk → send new message
+ * 4. On subsequent chunks → edit that message (throttled)
+ * 5. On tool execution → append tool indicator to message
+ * 6. When agent finishes → stop typing, send final clean response
+ *
  * @param ctx - grammY context
  * @param chatId - Telegram chat ID
  * @param prompt - Full prompt to send to agent (with timestamp, metadata, etc.)
@@ -52,23 +146,19 @@ export async function processAgentPrompt(
   logText?: string,
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
-    // Self-managed typing loop — works inside queued callbacks unlike the plugin
     const stopTyping = startTypingLoop(ctx.api, chatId);
 
     try {
-      // Log user message to daily log (fire-and-forget)
       void appendToDailyLog("user", logText ?? prompt);
 
-      // No placeholder message — typing indicator is enough.
-      // We'll send the first message when we have real text to show.
-      let messageId: number | null = null;
+      // Serialized streaming message — prevents duplicate sends
+      const stream = new StreamingMessage(ctx.api, chatId);
 
       // State for throttled editing
       let accumulatedText = "";
       let lastEditTime = 0;
       let editTimer: ReturnType<typeof setTimeout> | null = null;
 
-      // Subscribe to agent events for streaming
       const unsub = subscribeToAgent(chatId, (event) => {
         if (event.type === "message_update") {
           const msg = event.message;
@@ -78,10 +168,9 @@ export async function processAgentPrompt(
             .map((c) => c.text as string);
           accumulatedText = textParts.join("\n");
 
-          // Throttled edit (or first send)
           const now = Date.now();
           if (now - lastEditTime >= CONSTANTS.STREAM_THROTTLE_MS) {
-            void doStreamUpdate(ctx.api, chatId, accumulatedText, messageId, (id) => { messageId = id; });
+            stream.update(accumulatedText);
             lastEditTime = now;
             if (editTimer) {
               clearTimeout(editTimer);
@@ -90,7 +179,7 @@ export async function processAgentPrompt(
           } else if (!editTimer) {
             const delay = CONSTANTS.STREAM_THROTTLE_MS - (now - lastEditTime);
             editTimer = setTimeout(() => {
-              void doStreamUpdate(ctx.api, chatId, accumulatedText, messageId, (id) => { messageId = id; });
+              stream.update(accumulatedText);
               lastEditTime = Date.now();
               editTimer = null;
             }, delay);
@@ -101,32 +190,30 @@ export async function processAgentPrompt(
           const toolIndicator = accumulatedText
             ? `${accumulatedText}\n\n_🔧 ${event.toolName}..._`
             : `_🔧 ${event.toolName}..._`;
-          void doStreamUpdate(ctx.api, chatId, toolIndicator, messageId, (id) => { messageId = id; });
+          stream.update(toolIndicator);
           lastEditTime = Date.now();
         }
       });
 
       try {
-        // Run agent (blocks until all turns complete)
         const result = await agentPrompt(chatId, prompt);
 
-        // Stop typing immediately
+        // Stop typing FIRST — before any message work
         stopTyping();
 
-        // Clean up streaming state
         if (editTimer) {
           clearTimeout(editTimer);
           editTimer = null;
         }
         unsub();
 
-        // Send final response
-        const finalText = result.response.trim() || "(No response)";
+        // Wait for any in-flight streaming updates to finish
+        await stream.flush();
 
-        // Log assistant response to daily log (fire-and-forget)
+        const finalText = result.response.trim() || "(No response)";
         void appendToDailyLog("assistant", finalText);
 
-        await sendFinalResponse(ctx, chatId, messageId, finalText);
+        await sendFinalResponse(ctx, chatId, stream.getId(), finalText);
       } catch (err) {
         stopTyping();
         unsub();
@@ -145,40 +232,15 @@ export async function processAgentPrompt(
   });
 }
 
-/**
- * Send or edit a streaming update.
- * If no message exists yet, sends a new one and reports the ID via callback.
- * If a message exists, edits it.
- */
-async function doStreamUpdate(
-  api: Api,
-  chatId: number,
-  text: string,
-  messageId: number | null,
-  onNewMessage: (id: number) => void,
-): Promise<void> {
-  try {
-    const truncated = text.length > CONSTANTS.STREAM_EDIT_TRUNCATE
-      ? text.slice(0, CONSTANTS.STREAM_EDIT_TRUNCATE) + "\n\n_... (streaming)_"
-      : text;
-
-    if (messageId === null) {
-      // First chunk — send a new message
-      const id = await sendFormattedMessage(api, chatId, truncated);
-      onNewMessage(id);
-    } else {
-      // Subsequent chunks — edit existing
-      await editFormattedMessage(api, chatId, messageId, truncated);
-    }
-  } catch {
-    // Swallow — streaming updates are best-effort
-  }
-}
+// ---------------------------------------------------------------------------
+// Final response
+// ---------------------------------------------------------------------------
 
 /**
  * Send the final response.
- * If we already have a streaming message, edit it. Otherwise send new.
- * Falls back to deleting stale message and sending fresh if edit fails.
+ * If we already have a streaming message, edit it with the complete text.
+ * If no streaming message was created (e.g. very fast response), send new.
+ * Falls back to deleting stale message + sending fresh if edit fails.
  */
 async function sendFinalResponse(
   ctx: BotContext,
@@ -189,22 +251,18 @@ async function sendFinalResponse(
   const parts = splitMessage(text);
 
   if (messageId !== null) {
-    // Edit the streaming message with final content
     try {
       await editFormattedMessage(ctx.api, chatId, messageId, parts[0]!);
     } catch {
-      // Edit failed — delete stale message and send fresh
       try {
         await ctx.api.deleteMessage(chatId, messageId);
       } catch { /* already gone */ }
       await sendFormattedMessage(ctx.api, chatId, parts[0]!);
     }
   } else {
-    // No streaming message was sent — send the full response as new
     await sendFormattedMessage(ctx.api, chatId, parts[0]!);
   }
 
-  // Remaining parts: send as new messages
   for (let i = 1; i < parts.length; i++) {
     await sendFormattedMessage(ctx.api, chatId, parts[i]!);
   }
