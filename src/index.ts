@@ -1,6 +1,7 @@
 import { bot } from "./telegram/bot.ts";
 import { InputFile } from "grammy";
 import { env } from "./config/env.ts";
+import { CONSTANTS } from "./config/constants.ts";
 import { logger } from "./lib/logger.ts";
 import { db } from "./lib/database.ts";
 import { errorMessage } from "./lib/errors.ts";
@@ -101,7 +102,7 @@ try {
   if (await lockFile.exists()) {
     const lastSent = (await lockFile.text()).trim();
     const elapsed = Date.now() - Number(lastSent);
-    if (elapsed < 30_000) {
+    if (elapsed < CONSTANTS.MIN_UPTIME_BEFORE_RETRY_MS) {
       shouldSendStartup = false;
       logger.info("Skipping startup message (sent recently)");
     }

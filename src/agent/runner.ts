@@ -1,14 +1,16 @@
 import { Agent, type AgentEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
-import type { Message } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
 import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { errorMessage } from "../lib/errors.ts";
+import { recordUsage } from "../lib/usage.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
+import { createContextTransform } from "./compaction.ts";
 
 // Z.ai GLM-5 via pi-ai model registry
 const DEFAULT_MODEL = getModel("zai", "glm-5");
@@ -48,19 +50,24 @@ export class AgentRunner {
     // Create tools
     const tools = createAgentTools(opts.toolDeps);
 
-    // Create agent
+    // Resolve thinking level from env (default: "off")
+    const thinkingLevel = env.THINKING_LEVEL ?? "off";
+
+    // Create agent with context compaction
     this.agent = new Agent({
       initialState: {
         systemPrompt: buildSystemPrompt(),
         model: DEFAULT_MODEL,
-        thinkingLevel: "off",
+        thinkingLevel,
         tools,
       },
       convertToLlm,
+      transformContext: createContextTransform(),
       getApiKey: async (provider: string) => {
         if (provider === "zai") return env.ZAI_API_KEY;
-        // Support Anthropic fallback for multi-provider future
         if (provider === "anthropic") return Bun.env["ANTHROPIC_API_KEY"] ?? undefined;
+        if (provider === "openai") return Bun.env["OPENAI_API_KEY"] ?? undefined;
+        if (provider === "groq") return Bun.env["GROQ_API_KEY"] ?? undefined;
         return undefined;
       },
     });
@@ -73,8 +80,13 @@ export class AgentRunner {
       logger.debug("Loaded session", { chatId: opts.chatId, messageCount: loaded.messages.length });
     }
 
-    // Wire up event forwarding
+    // Wire up event forwarding + usage tracking
     this.agent.subscribe((event: AgentEvent) => {
+      // Track usage from completed turns
+      if (event.type === "turn_end") {
+        this.trackUsage(event.message);
+      }
+
       for (const cb of this.eventCallbacks) {
         try {
           cb(event);
@@ -85,6 +97,27 @@ export class AgentRunner {
     });
 
     logger.info("AgentRunner created", { chatId: opts.chatId });
+  }
+
+  /**
+   * Extract usage from an assistant message and record it.
+   */
+  private trackUsage(message: AgentMessage): void {
+    if (!message || message.role !== "assistant") return;
+
+    const assistantMsg = message as unknown as AssistantMessage;
+    const usage = assistantMsg.usage;
+    if (!usage) return;
+
+    recordUsage(this.chatId, {
+      model: assistantMsg.model ?? this.modelName,
+      provider: assistantMsg.provider ?? "unknown",
+      inputTokens: usage.input ?? 0,
+      outputTokens: usage.output ?? 0,
+      cacheRead: usage.cacheRead ?? 0,
+      cacheWrite: usage.cacheWrite ?? 0,
+      costTotal: usage.cost?.total ?? 0,
+    });
   }
 
   /**

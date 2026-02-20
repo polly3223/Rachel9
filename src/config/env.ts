@@ -20,6 +20,8 @@ export const envSchema = z.object({
   ZAI_API_KEY: z.string().min(1, {
     message: "Z.ai API key required. Get from Z.ai Pro dashboard",
   }),
+  // Agent behavior
+  THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high"]).default("off"),
   // STT (optional — only needed for voice/audio transcription)
   STT_PROVIDER: z.enum(["groq", "openai"]).default("groq"),
   GROQ_API_KEY: z.string().optional(),

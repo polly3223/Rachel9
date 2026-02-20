@@ -43,6 +43,22 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    timestamp INTEGER NOT NULL,
+    model TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_read INTEGER DEFAULT 0,
+    cache_write INTEGER DEFAULT 0,
+    cost_total REAL DEFAULT 0,
+    thinking_tokens INTEGER DEFAULT 0
+  )
+`);
+
 // Migration: add cron column if missing (for databases created before Phase 5)
 try {
   db.exec("ALTER TABLE tasks ADD COLUMN cron TEXT");

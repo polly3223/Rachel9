@@ -7,9 +7,7 @@ import { enqueueForChat } from "../lib/queue.ts";
 import { logger } from "../../lib/logger.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { appendToDailyLog } from "../../lib/memory.ts";
-
-/** Minimum ms between message edits during streaming */
-const EDIT_THROTTLE_MS = 500;
+import { CONSTANTS } from "../../config/constants.ts";
 
 /**
  * Handle incoming text messages.
@@ -67,7 +65,7 @@ export async function processAgentPrompt(
 
           // Throttled edit
           const now = Date.now();
-          if (now - lastEditTime >= EDIT_THROTTLE_MS) {
+          if (now - lastEditTime >= CONSTANTS.STREAM_THROTTLE_MS) {
             void doEdit(ctx.api, chatId, messageId, accumulatedText);
             lastEditTime = now;
             if (editTimer) {
@@ -75,7 +73,7 @@ export async function processAgentPrompt(
               editTimer = null;
             }
           } else if (!editTimer) {
-            const delay = EDIT_THROTTLE_MS - (now - lastEditTime);
+            const delay = CONSTANTS.STREAM_THROTTLE_MS - (now - lastEditTime);
             editTimer = setTimeout(() => {
               void doEdit(ctx.api, chatId, messageId, accumulatedText);
               lastEditTime = Date.now();
@@ -132,8 +130,8 @@ export async function processAgentPrompt(
  */
 async function doEdit(api: Api, chatId: number, messageId: number, text: string): Promise<void> {
   try {
-    const truncated = text.length > 4000
-      ? text.slice(0, 4000) + "\n\n_... (streaming)_"
+    const truncated = text.length > CONSTANTS.STREAM_EDIT_TRUNCATE
+      ? text.slice(0, CONSTANTS.STREAM_EDIT_TRUNCATE) + "\n\n_... (streaming)_"
       : text;
     await editFormattedMessage(api, chatId, messageId, truncated);
   } catch {

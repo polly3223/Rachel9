@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase:** Phase 6 complete — ready for Phase 7
-**Status:** Full Rachel8 feature parity. WhatsApp bridge, 12 skills, all media, task scheduler.
+**Phase:** Phase 7 complete — ready for Phase 8
+**Status:** Production-ready. Dockerfile, setup wizard, systemd, self-management. Rachel Cloud compatible.
 
 ## Progress
 
@@ -15,7 +15,7 @@
 | Phase 4: Memory & Persistence | ✅ Complete | MEM-01 to MEM-06, AGENT-11/12. Daily logs, memory init, backward compat |
 | Phase 5: Tasks & Media | ✅ Complete | TASK-01 to TASK-09, TG-02 to TG-09. Scheduler, media, STT, send-file |
 | Phase 6: WhatsApp & Skills | ✅ Complete | WA-01 to WA-11, SKILL-01 to SKILL-03. WhatsApp as skill, 12 skills ported |
-| Phase 7: Deployment & Self-Mgmt | ⬜ Not started | — |
+| Phase 7: Deployment & Self-Mgmt | ✅ Complete | DEPLOY-03 to 05, SELF-01 to 04. Dockerfile, wizard, systemd |
 | Phase 8: Differentiators | ⬜ Not started | — |
 
 ## Key Decisions
@@ -37,4 +37,4 @@
 None currently.
 
 ---
-*Last updated: 2026-02-20 (Phase 6 complete)*
+*Last updated: 2026-02-20 (Phase 7 complete)*

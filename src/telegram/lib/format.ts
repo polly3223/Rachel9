@@ -1,5 +1,6 @@
 import type { Api } from "grammy";
 import { logger } from "../../lib/logger.ts";
+import { CONSTANTS } from "../../config/constants.ts";
 
 /**
  * Send a new message with Markdown formatting, falling back to plain text.
@@ -57,7 +58,7 @@ export async function editFormattedMessage(
  * Split a long message into chunks that fit Telegram's 4096 char limit.
  * Tries to split at newlines for clean breaks.
  */
-export function splitMessage(text: string, maxLen = 4096): string[] {
+export function splitMessage(text: string, maxLen = CONSTANTS.TELEGRAM_MAX_MESSAGE_LENGTH): string[] {
   if (text.length <= maxLen) return [text];
 
   const parts: string[] = [];

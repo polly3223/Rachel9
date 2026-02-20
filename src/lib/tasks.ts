@@ -1,6 +1,7 @@
 import { db } from "./database.ts";
 import { logger } from "./logger.ts";
 import { errorMessage } from "./errors.ts";
+import { CONSTANTS } from "../config/constants.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -164,7 +165,7 @@ async function executeTask(task: TaskRow): Promise<void> {
         const result = await agentExecutor(prompt);
         if (telegramSender && result) {
           // Truncate if too long for Telegram
-          const truncated = result.length > 4000 ? result.slice(0, 4000) + "\n\n...(truncated)" : result;
+          const truncated = result.length > CONSTANTS.TASK_RESULT_TRUNCATE ? result.slice(0, CONSTANTS.TASK_RESULT_TRUNCATE) + "\n\n...(truncated)" : result;
           await telegramSender(truncated);
         }
       } catch (err) {
@@ -184,7 +185,7 @@ async function executeTask(task: TaskRow): Promise<void> {
 
 let pollInterval: ReturnType<typeof setInterval> | null = null;
 
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = CONSTANTS.TASK_POLL_INTERVAL_MS;
 
 async function pollTasks(): Promise<void> {
   try {
