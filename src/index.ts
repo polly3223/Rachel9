@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { bot } from "./telegram/bot.ts";
 import { InputFile } from "grammy";
 import { env } from "./config/env.ts";
-import { CONSTANTS } from "./config/constants.ts";
 import { logger } from "./lib/logger.ts";
 import { db } from "./lib/database.ts";
 import { errorMessage } from "./lib/errors.ts";
@@ -104,38 +103,6 @@ function shutdown(): void {
 
 process.once("SIGTERM", () => shutdown());
 process.once("SIGINT", () => shutdown());
-
-// ---------------------------------------------------------------------------
-// Startup debouncing (lock file)
-// Prevents spam "I'm online!" messages during crash loops.
-// If startup message was sent within last 30s, skip it.
-// ---------------------------------------------------------------------------
-const STARTUP_LOCK = "/tmp/rachel9-startup.lock";
-let shouldSendStartup = true;
-
-try {
-  const lockFile = Bun.file(STARTUP_LOCK);
-  if (await lockFile.exists()) {
-    const lastSent = (await lockFile.text()).trim();
-    const elapsed = Date.now() - Number(lastSent);
-    if (elapsed < CONSTANTS.MIN_UPTIME_BEFORE_RETRY_MS) {
-      shouldSendStartup = false;
-      logger.info("Skipping startup message (sent recently)");
-    }
-  }
-} catch {
-  // Lock file read failed -- send anyway
-}
-
-if (shouldSendStartup) {
-  try {
-    await bot.api.sendMessage(env.OWNER_TELEGRAM_USER_ID, "Rachel9 is online!");
-    await Bun.write(STARTUP_LOCK, String(Date.now()));
-    logger.info("Startup message sent");
-  } catch (err) {
-    logger.warn("Could not send startup message", { error: errorMessage(err) });
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Startup mode: webhook (Rachel Cloud containers) vs polling (standalone)
