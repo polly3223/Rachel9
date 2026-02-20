@@ -142,6 +142,7 @@ async function doEdit(api: Api, chatId: number, messageId: number, text: string)
 /**
  * Send the final response: edit the placeholder with full text,
  * or split into multiple messages if too long.
+ * If the edit fails, delete the placeholder and send a fresh message.
  */
 async function sendFinalResponse(
   ctx: BotContext,
@@ -151,8 +152,18 @@ async function sendFinalResponse(
 ): Promise<void> {
   const parts = splitMessage(text);
 
-  // First part: edit the placeholder
-  await editFormattedMessage(ctx.api, chatId, messageId, parts[0]!);
+  // First part: try to edit the placeholder
+  try {
+    await editFormattedMessage(ctx.api, chatId, messageId, parts[0]!);
+  } catch {
+    // Edit failed — delete the stale placeholder and send fresh
+    try {
+      await ctx.api.deleteMessage(chatId, messageId);
+    } catch {
+      // Placeholder already gone — fine
+    }
+    await sendFormattedMessage(ctx.api, chatId, parts[0]!);
+  }
 
   // Remaining parts: send as new messages
   for (let i = 1; i < parts.length; i++) {

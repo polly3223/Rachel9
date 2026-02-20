@@ -5,11 +5,20 @@ import { CONSTANTS } from "../../config/constants.ts";
 /**
  * Sanitize text for Telegram's legacy Markdown parser.
  * - Strips language identifiers from code fences (```ts → ```)
- *   because Telegram Markdown only supports plain ``` blocks.
+ * - Closes unclosed code fences (prevents Markdown parse errors mid-stream)
+ * - Escapes problematic characters outside code blocks
  */
 function sanitizeForTelegram(text: string): string {
-  // Replace ```<lang> with just ``` (Telegram doesn't support language hints)
-  return text.replace(/```[a-zA-Z0-9_+-]+\n/g, "```\n");
+  // Strip language identifiers from code fences
+  let sanitized = text.replace(/```[a-zA-Z0-9_+-]+\n/g, "```\n");
+
+  // Count backtick fences — if odd, the last one is unclosed
+  const fenceCount = (sanitized.match(/```/g) || []).length;
+  if (fenceCount % 2 !== 0) {
+    sanitized += "\n```";
+  }
+
+  return sanitized;
 }
 
 /**
@@ -26,8 +35,14 @@ export async function sendFormattedMessage(
     const msg = await api.sendMessage(chatId, sanitized, { parse_mode: "Markdown" });
     return msg.message_id;
   } catch {
-    const msg = await api.sendMessage(chatId, text);
-    return msg.message_id;
+    // Markdown failed — send as plain text
+    try {
+      const msg = await api.sendMessage(chatId, text);
+      return msg.message_id;
+    } catch (err) {
+      logger.error("sendFormattedMessage failed entirely", { chatId, error: String(err) });
+      throw err;
+    }
   }
 }
 
@@ -48,9 +63,7 @@ export async function editFormattedMessage(
     await api.editMessageText(chatId, messageId, sanitized, { parse_mode: "Markdown" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // "message is not modified" — ignore (text unchanged)
     if (msg.includes("message is not modified")) return;
-    // "message to edit not found" — message was deleted
     if (msg.includes("message to edit not found")) {
       logger.debug("Message was deleted, can't edit", { chatId, messageId });
       return;
@@ -61,6 +74,7 @@ export async function editFormattedMessage(
     } catch (retryErr) {
       const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
       if (retryMsg.includes("message is not modified")) return;
+      if (retryMsg.includes("message to edit not found")) return;
       logger.debug("Edit failed entirely", { chatId, messageId, error: retryMsg });
     }
   }
