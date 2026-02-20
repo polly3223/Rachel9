@@ -150,8 +150,12 @@ export class AgentRunner {
     });
 
     try {
-      // Run agent
-      await this.agent.prompt(text);
+      // Run agent with timeout to prevent indefinite hangs
+      const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("Agent prompt timed out after 10 minutes")), TIMEOUT_MS);
+      });
+      await Promise.race([this.agent.prompt(text), timeoutPromise]);
 
       // Extract response text from last assistant message
       const messages = this.agent.state.messages;
@@ -175,6 +179,17 @@ export class AgentRunner {
       if (this.isContextOverflow(msg)) {
         logger.warn("Context overflow detected, resetting session", { chatId: this.chatId });
         return this.handleContextOverflow(text);
+      }
+
+      // Check for timeout — return a user-friendly response instead of crashing
+      if (msg.includes("timed out")) {
+        logger.warn("Agent prompt timed out", { chatId: this.chatId });
+        // Persist whatever we have so far
+        this.persistSession();
+        return {
+          response: "Sorry, that task took too long and I had to stop. Try breaking it into smaller steps, or ask me to do it differently.",
+          toolsUsed,
+        };
       }
 
       throw err;
