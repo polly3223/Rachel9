@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { bot } from "./telegram/bot.ts";
 import { InputFile } from "grammy";
 import { env } from "./config/env.ts";
@@ -8,6 +9,21 @@ import { errorMessage } from "./lib/errors.ts";
 import { initAgentSystem, agentPrompt } from "./agent/index.ts";
 import { initializeMemorySystem } from "./lib/memory.ts";
 import { setTelegramSender, setAgentExecutor, startTaskPoller, shutdownTasks } from "./lib/tasks.ts";
+
+// ---------------------------------------------------------------------------
+// SAFETY GUARD: Prevent polling mode inside Docker containers.
+// If RACHEL_CLOUD is not set, the bot starts in polling mode which calls
+// deleteWebhook on the shared bot token — breaking ALL user containers.
+// This check makes the catastrophic failure physically impossible.
+// ---------------------------------------------------------------------------
+if (!Bun.env["RACHEL_CLOUD"] && existsSync("/.dockerenv")) {
+  console.error(
+    "FATAL: Running inside Docker without RACHEL_CLOUD=true. " +
+    "Polling mode would call deleteWebhook on the shared bot token, " +
+    "breaking all containers. Set RACHEL_CLOUD=true or use the orchestrator. Aborting."
+  );
+  process.exit(1);
+}
 
 logger.info("Rachel9 starting...", { env: env.NODE_ENV });
 logger.info("Configuration loaded", {

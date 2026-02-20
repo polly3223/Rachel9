@@ -77,14 +77,23 @@ export class AgentRunner {
     if (loaded.messages.length > 0) {
       this.agent.replaceMessages(loaded.messages);
       this.lastPersistedCount = loaded.messages.length;
-      logger.debug("Loaded session", { chatId: opts.chatId, messageCount: loaded.messages.length });
+      logger.info("Loaded session from disk", { chatId: opts.chatId, messageCount: loaded.messages.length });
+    } else {
+      logger.info("No previous session found, starting fresh", { chatId: opts.chatId });
     }
 
     // Wire up event forwarding + usage tracking
     this.agent.subscribe((event: AgentEvent) => {
-      // Track usage from completed turns
-      if (event.type === "turn_end") {
+      // Log key events for debugging
+      if (event.type === "turn_start") {
+        logger.info("Agent turn started", { chatId: opts.chatId });
+      } else if (event.type === "turn_end") {
+        logger.info("Agent turn ended", { chatId: opts.chatId });
         this.trackUsage(event.message);
+      } else if (event.type === "tool_execution_start") {
+        logger.info("Tool execution started", { chatId: opts.chatId, tool: event.toolName });
+      } else if (event.type === "tool_execution_end") {
+        logger.info("Tool execution ended", { chatId: opts.chatId, tool: event.toolName });
       }
 
       for (const cb of this.eventCallbacks) {
@@ -151,11 +160,13 @@ export class AgentRunner {
 
     try {
       // Run agent with timeout to prevent indefinite hangs
+      logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, existingMessages: this.agent.state.messages.length });
       const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error("Agent prompt timed out after 10 minutes")), TIMEOUT_MS);
       });
       await Promise.race([this.agent.prompt(text), timeoutPromise]);
+      logger.info("Agent prompt completed", { chatId: this.chatId });
 
       // Extract response text from last assistant message
       const messages = this.agent.state.messages;
