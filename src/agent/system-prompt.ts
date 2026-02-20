@@ -202,11 +202,22 @@ function loadCoreMemory(): string {
 }
 
 /**
+ * Get current timestamp block for the system prompt.
+ * Provides both UTC and CET so Rachel always knows the exact time.
+ */
+function getCurrentTimestamp(): string {
+  const now = new Date();
+  const utc = now.toLocaleString("en-GB", { timeZone: "UTC", dateStyle: "full", timeStyle: "short" });
+  const cet = now.toLocaleString("en-GB", { timeZone: "Europe/Berlin", dateStyle: "full", timeStyle: "short" });
+  return `Current time: ${cet} CET (${utc} UTC)`;
+}
+
+/**
  * Build the complete system prompt with memory injection.
  * Called before every agent query to ensure fresh memory.
  */
 export function buildSystemPrompt(): string {
-  let prompt = BASE_PROMPT;
+  let prompt = `${getCurrentTimestamp()}\n\n${BASE_PROMPT}`;
 
   // Inject skills list
   const skillsDir = join(process.cwd(), "skills");
