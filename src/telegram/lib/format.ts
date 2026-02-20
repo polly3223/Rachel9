@@ -3,6 +3,16 @@ import { logger } from "../../lib/logger.ts";
 import { CONSTANTS } from "../../config/constants.ts";
 
 /**
+ * Sanitize text for Telegram's legacy Markdown parser.
+ * - Strips language identifiers from code fences (```ts → ```)
+ *   because Telegram Markdown only supports plain ``` blocks.
+ */
+function sanitizeForTelegram(text: string): string {
+  // Replace ```<lang> with just ``` (Telegram doesn't support language hints)
+  return text.replace(/```[a-zA-Z0-9_+-]+\n/g, "```\n");
+}
+
+/**
  * Send a new message with Markdown formatting, falling back to plain text.
  * Returns the message_id.
  */
@@ -11,8 +21,9 @@ export async function sendFormattedMessage(
   chatId: number,
   text: string,
 ): Promise<number> {
+  const sanitized = sanitizeForTelegram(text);
   try {
-    const msg = await api.sendMessage(chatId, text, { parse_mode: "Markdown" });
+    const msg = await api.sendMessage(chatId, sanitized, { parse_mode: "Markdown" });
     return msg.message_id;
   } catch {
     const msg = await api.sendMessage(chatId, text);
@@ -32,8 +43,9 @@ export async function editFormattedMessage(
 ): Promise<void> {
   if (!text.trim()) return; // Never edit with empty text
 
+  const sanitized = sanitizeForTelegram(text);
   try {
-    await api.editMessageText(chatId, messageId, text, { parse_mode: "Markdown" });
+    await api.editMessageText(chatId, messageId, sanitized, { parse_mode: "Markdown" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     // "message is not modified" — ignore (text unchanged)
