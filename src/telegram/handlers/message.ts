@@ -6,6 +6,7 @@ import { editFormattedMessage, sendFormattedMessage, splitMessage } from "../lib
 import { enqueueForChat } from "../lib/queue.ts";
 import { logger } from "../../lib/logger.ts";
 import { errorMessage } from "../../lib/errors.ts";
+import { appendToDailyLog } from "../../lib/memory.ts";
 
 /** Minimum ms between message edits during streaming */
 const EDIT_THROTTLE_MS = 500;
@@ -39,6 +40,9 @@ export async function handleTextMessage(ctx: BotContext): Promise<void> {
 async function processMessage(ctx: BotContext, chatId: number, text: string): Promise<void> {
   // Prepend CET/CEST timestamp
   const timestampedText = `${timestamp()} ${text}`;
+
+  // Log user message to daily log (fire-and-forget)
+  void appendToDailyLog("user", text);
 
   // Send placeholder message for streaming
   const placeholder = await ctx.reply("...");
@@ -101,6 +105,10 @@ async function processMessage(ctx: BotContext, chatId: number, text: string): Pr
 
     // Send final response
     const finalText = result.response.trim() || "(No response)";
+
+    // Log assistant response to daily log (fire-and-forget)
+    void appendToDailyLog("assistant", finalText);
+
     await sendFinalResponse(ctx, chatId, messageId, finalText);
   } catch (err) {
     unsub();

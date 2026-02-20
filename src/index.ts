@@ -5,12 +5,18 @@ import { logger } from "./lib/logger.ts";
 import { db } from "./lib/database.ts";
 import { errorMessage } from "./lib/errors.ts";
 import { initAgentSystem } from "./agent/index.ts";
+import { initializeMemorySystem } from "./lib/memory.ts";
 
 logger.info("Rachel9 starting...", { env: env.NODE_ENV });
 logger.info("Configuration loaded", {
   sharedFolder: env.SHARED_FOLDER_PATH,
   logLevel: env.LOG_LEVEL,
 });
+
+// ---------------------------------------------------------------------------
+// Initialize memory system (creates directories if needed)
+// ---------------------------------------------------------------------------
+await initializeMemorySystem();
 
 // ---------------------------------------------------------------------------
 // Initialize agent system
