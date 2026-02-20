@@ -150,15 +150,23 @@ if (isWebhookMode) {
       }
 
       // Webhook endpoint -- receives raw Telegram updates from the router
+      // IMPORTANT: Return 200 immediately and process asynchronously.
+      // The router's fetch() has a timeout (~5min). If the agent takes longer
+      // (e.g., web search + PDF creation), the router times out and sends
+      // "⚠️ Rachel is temporarily unavailable" to the user — even though
+      // the container is fine and still processing. Fire-and-forget fixes this.
       if (req.method === "POST" && url.pathname === "/webhook") {
         try {
           const update = (await req.json()) as import("@grammyjs/types").Update;
-          await bot.handleUpdate(update);
+          // Fire-and-forget: process in background, respond to router instantly
+          void bot.handleUpdate(update).catch((err) => {
+            logger.error("Webhook handler error (async)", { error: errorMessage(err) });
+          });
           return new Response(JSON.stringify({ ok: true }), {
             headers: { "Content-Type": "application/json" },
           });
         } catch (err) {
-          logger.error("Webhook handler error", { error: errorMessage(err) });
+          logger.error("Webhook parse error", { error: errorMessage(err) });
           return new Response(JSON.stringify({ ok: false }), {
             status: 500,
             headers: { "Content-Type": "application/json" },
