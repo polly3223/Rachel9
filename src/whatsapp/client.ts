@@ -368,8 +368,8 @@ export async function sendFile(to: string, filePath: string, caption?: string): 
 // ---------------------------------------------------------------------------
 
 const messageCache: Map<string, proto.IWebMessageInfo[]> = new Map();
-const MAX_CACHED_PER_CHAT = 200;
-const MAX_CACHED_CHATS = 50; // Global cap: evict oldest chats when exceeded
+const MAX_CACHED_PER_CHAT = 500;
+const MAX_CACHED_CHATS = 500; // Global cap: evict oldest chats when exceeded
 
 /** Evict oldest chat entries when cache exceeds MAX_CACHED_CHATS */
 function evictOldChats(): void {
