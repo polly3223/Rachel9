@@ -20,6 +20,10 @@ export const envSchema = z.object({
   ZAI_API_KEY: z.string().min(1, {
     message: "Z.ai API key required. Get from Z.ai Pro dashboard",
   }),
+  // STT (optional — only needed for voice/audio transcription)
+  STT_PROVIDER: z.enum(["groq", "openai"]).default("groq"),
+  GROQ_API_KEY: z.string().optional(),
+  OPENAI_API_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

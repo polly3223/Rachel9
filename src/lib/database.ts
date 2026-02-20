@@ -34,12 +34,20 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    type TEXT NOT NULL,
+    type TEXT NOT NULL CHECK(type IN ('bash', 'reminder', 'cleanup', 'agent')),
     data TEXT NOT NULL DEFAULT '{}',
+    cron TEXT,
     next_run INTEGER NOT NULL,
     enabled INTEGER NOT NULL DEFAULT 1,
     created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
   )
 `);
+
+// Migration: add cron column if missing (for databases created before Phase 5)
+try {
+  db.exec("ALTER TABLE tasks ADD COLUMN cron TEXT");
+} catch {
+  // Column already exists — expected
+}
 
 logger.info("Database initialized", { path: DB_PATH });

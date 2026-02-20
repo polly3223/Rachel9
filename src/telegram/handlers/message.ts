@@ -20,12 +20,102 @@ export async function handleTextMessage(ctx: BotContext): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!text || !chatId) return;
 
-  // Enqueue to prevent concurrent agent runs for same chat
+  const timestampedText = `${timestamp()} ${text}`;
+  await processAgentPrompt(ctx, chatId, timestampedText, text);
+}
+
+/**
+ * Shared streaming agent prompt handler.
+ * Used by both text and media handlers.
+ *
+ * @param ctx - grammY context
+ * @param chatId - Telegram chat ID
+ * @param prompt - Full prompt to send to agent (with timestamp, metadata, etc.)
+ * @param logText - Human-readable version for daily log (optional, defaults to prompt)
+ */
+export async function processAgentPrompt(
+  ctx: BotContext,
+  chatId: number,
+  prompt: string,
+  logText?: string,
+): Promise<void> {
   await enqueueForChat(chatId, async () => {
     ctx.chatAction = "typing";
 
     try {
-      await processMessage(ctx, chatId, text);
+      // Log user message to daily log (fire-and-forget)
+      void appendToDailyLog("user", logText ?? prompt);
+
+      // Send placeholder message for streaming
+      const placeholder = await ctx.reply("...");
+      const messageId = placeholder.message_id;
+
+      // State for throttled editing
+      let accumulatedText = "";
+      let lastEditTime = 0;
+      let editTimer: ReturnType<typeof setTimeout> | null = null;
+
+      // Subscribe to agent events for streaming
+      const unsub = subscribeToAgent(chatId, (event) => {
+        if (event.type === "message_update") {
+          const msg = event.message;
+          if (!("content" in msg) || !Array.isArray(msg.content)) return;
+          const textParts = (msg.content as { type: string; text?: string }[])
+            .filter((c) => c.type === "text" && c.text)
+            .map((c) => c.text as string);
+          accumulatedText = textParts.join("\n");
+
+          // Throttled edit
+          const now = Date.now();
+          if (now - lastEditTime >= EDIT_THROTTLE_MS) {
+            void doEdit(ctx.api, chatId, messageId, accumulatedText);
+            lastEditTime = now;
+            if (editTimer) {
+              clearTimeout(editTimer);
+              editTimer = null;
+            }
+          } else if (!editTimer) {
+            const delay = EDIT_THROTTLE_MS - (now - lastEditTime);
+            editTimer = setTimeout(() => {
+              void doEdit(ctx.api, chatId, messageId, accumulatedText);
+              lastEditTime = Date.now();
+              editTimer = null;
+            }, delay);
+          }
+        }
+
+        if (event.type === "tool_execution_start") {
+          const toolIndicator = accumulatedText
+            ? `${accumulatedText}\n\n_🔧 ${event.toolName}..._`
+            : `_🔧 ${event.toolName}..._`;
+          void doEdit(ctx.api, chatId, messageId, toolIndicator);
+          lastEditTime = Date.now();
+        }
+      });
+
+      try {
+        // Run agent (blocks until all turns complete)
+        const result = await agentPrompt(chatId, prompt);
+
+        // Clean up streaming state
+        if (editTimer) {
+          clearTimeout(editTimer);
+          editTimer = null;
+        }
+        unsub();
+
+        // Send final response
+        const finalText = result.response.trim() || "(No response)";
+
+        // Log assistant response to daily log (fire-and-forget)
+        void appendToDailyLog("assistant", finalText);
+
+        await sendFinalResponse(ctx, chatId, messageId, finalText);
+      } catch (err) {
+        unsub();
+        if (editTimer) clearTimeout(editTimer);
+        throw err;
+      }
     } catch (err) {
       logger.error("Message handler error", { chatId, error: errorMessage(err) });
       try {
@@ -37,92 +127,11 @@ export async function handleTextMessage(ctx: BotContext): Promise<void> {
   });
 }
 
-async function processMessage(ctx: BotContext, chatId: number, text: string): Promise<void> {
-  // Prepend CET/CEST timestamp
-  const timestampedText = `${timestamp()} ${text}`;
-
-  // Log user message to daily log (fire-and-forget)
-  void appendToDailyLog("user", text);
-
-  // Send placeholder message for streaming
-  const placeholder = await ctx.reply("...");
-  const messageId = placeholder.message_id;
-
-  // State for throttled editing
-  let accumulatedText = "";
-  let lastEditTime = 0;
-  let editTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // Subscribe to agent events for streaming
-  const unsub = subscribeToAgent(chatId, (event) => {
-    if (event.type === "message_update") {
-      // Extract accumulated text from the streaming message
-      const msg = event.message;
-      if (!("content" in msg) || !Array.isArray(msg.content)) return;
-      const textParts = (msg.content as { type: string; text?: string }[])
-        .filter((c) => c.type === "text" && c.text)
-        .map((c) => c.text as string);
-      accumulatedText = textParts.join("\n");
-
-      // Throttled edit
-      const now = Date.now();
-      if (now - lastEditTime >= EDIT_THROTTLE_MS) {
-        void doEdit(ctx.api, chatId, messageId, accumulatedText);
-        lastEditTime = now;
-        if (editTimer) {
-          clearTimeout(editTimer);
-          editTimer = null;
-        }
-      } else if (!editTimer) {
-        const delay = EDIT_THROTTLE_MS - (now - lastEditTime);
-        editTimer = setTimeout(() => {
-          void doEdit(ctx.api, chatId, messageId, accumulatedText);
-          lastEditTime = Date.now();
-          editTimer = null;
-        }, delay);
-      }
-    }
-
-    if (event.type === "tool_execution_start") {
-      const toolIndicator = accumulatedText
-        ? `${accumulatedText}\n\n_🔧 ${event.toolName}..._`
-        : `_🔧 ${event.toolName}..._`;
-      void doEdit(ctx.api, chatId, messageId, toolIndicator);
-      lastEditTime = Date.now();
-    }
-  });
-
-  try {
-    // Run agent (blocks until all turns complete)
-    const result = await agentPrompt(chatId, timestampedText);
-
-    // Clean up streaming state
-    if (editTimer) {
-      clearTimeout(editTimer);
-      editTimer = null;
-    }
-    unsub();
-
-    // Send final response
-    const finalText = result.response.trim() || "(No response)";
-
-    // Log assistant response to daily log (fire-and-forget)
-    void appendToDailyLog("assistant", finalText);
-
-    await sendFinalResponse(ctx, chatId, messageId, finalText);
-  } catch (err) {
-    unsub();
-    if (editTimer) clearTimeout(editTimer);
-    throw err;
-  }
-}
-
 /**
  * Edit message during streaming. Swallows errors to avoid crashing the stream.
  */
 async function doEdit(api: Api, chatId: number, messageId: number, text: string): Promise<void> {
   try {
-    // Truncate if too long for Telegram during streaming
     const truncated = text.length > 4000
       ? text.slice(0, 4000) + "\n\n_... (streaming)_"
       : text;

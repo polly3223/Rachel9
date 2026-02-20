@@ -4,6 +4,15 @@ import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { authGuard } from "./middleware/auth.ts";
 import { handleTextMessage } from "./handlers/message.ts";
+import {
+  handlePhoto,
+  handleDocument,
+  handleVoice,
+  handleAudio,
+  handleVideo,
+  handleVideoNote,
+  handleSticker,
+} from "./handlers/media.ts";
 
 export type BotContext = Context & AutoChatActionFlavor;
 
@@ -18,6 +27,13 @@ bot.command("start", (ctx) => ctx.reply("Hello! I'm Rachel, your personal AI ass
 
 // Message handlers
 bot.on("message:text", handleTextMessage);
+bot.on("message:photo", handlePhoto);
+bot.on("message:document", handleDocument);
+bot.on("message:voice", handleVoice);
+bot.on("message:audio", handleAudio);
+bot.on("message:video", handleVideo);
+bot.on("message:video_note", handleVideoNote);
+bot.on("message:sticker", handleSticker);
 
 // Error handler
 function formatBotError(e: unknown): string {

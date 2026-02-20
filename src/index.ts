@@ -4,8 +4,9 @@ import { env } from "./config/env.ts";
 import { logger } from "./lib/logger.ts";
 import { db } from "./lib/database.ts";
 import { errorMessage } from "./lib/errors.ts";
-import { initAgentSystem } from "./agent/index.ts";
+import { initAgentSystem, agentPrompt } from "./agent/index.ts";
 import { initializeMemorySystem } from "./lib/memory.ts";
+import { setTelegramSender, setAgentExecutor, startTaskPoller, shutdownTasks } from "./lib/tasks.ts";
 
 logger.info("Rachel9 starting...", { env: env.NODE_ENV });
 logger.info("Configuration loaded", {
@@ -38,6 +39,20 @@ initAgentSystem({
 });
 
 // ---------------------------------------------------------------------------
+// Initialize task scheduler
+// ---------------------------------------------------------------------------
+setTelegramSender(async (text: string) => {
+  await bot.api.sendMessage(env.OWNER_TELEGRAM_USER_ID, text);
+});
+
+setAgentExecutor(async (prompt: string) => {
+  const result = await agentPrompt(env.OWNER_TELEGRAM_USER_ID, prompt);
+  return result.response;
+});
+
+startTaskPoller();
+
+// ---------------------------------------------------------------------------
 // Graceful shutdown
 // ---------------------------------------------------------------------------
 const isWebhookMode = Bun.env["RACHEL_CLOUD"] === "true";
@@ -48,6 +63,9 @@ function shutdown(): void {
   isShuttingDown = true;
 
   logger.info("Graceful shutdown initiated");
+
+  // Stop task poller
+  shutdownTasks();
 
   // Close database (flushes WAL, releases file handles)
   try {
