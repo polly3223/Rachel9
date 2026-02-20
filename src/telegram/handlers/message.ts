@@ -190,8 +190,8 @@ export async function processAgentPrompt(
 
         if (event.type === "tool_execution_start") {
           const toolIndicator = accumulatedText
-            ? `${accumulatedText}\n\n_🔧 ${event.toolName}..._`
-            : `_🔧 ${event.toolName}..._`;
+            ? `${accumulatedText}\n\n🔧 ${event.toolName}...`
+            : `🔧 ${event.toolName}...`;
           stream.update(toolIndicator);
           lastEditTime = Date.now();
         }

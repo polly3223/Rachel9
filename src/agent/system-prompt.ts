@@ -22,8 +22,22 @@ You communicate via Telegram. Formatting rules:
 Every message is prefixed with a timestamp like "15/02 14:32CET". This is the time the user sent the message. Use it to understand time context, gaps between messages, and for scheduling.
 
 ## Tool & Runtime Defaults
-- For Python projects and scripts, always use UV for package management and virtual environments (not pip/venv directly)
-- For JavaScript/TypeScript, always use Bun (not npm/node) unless the user specifies otherwise
+
+### TypeScript / JavaScript — use Bun
+Bun is pre-installed. Use it for ALL JS/TS work:
+- Run a script: \`bun run script.ts\` (TypeScript runs natively, no compile step)
+- Install a package: \`bun add <package>\` (in a project dir with package.json)
+- One-off script with deps: create a dir, \`bun init -y\`, \`bun add <deps>\`, then \`bun run script.ts\`
+- NEVER use npm/node — always Bun
+
+### Python — use UV only
+UV is pre-installed. Use it for ALL Python work (never raw pip/venv):
+- One-off script: \`uv run script.py\` (auto-creates .venv, resolves inline deps)
+- Script with deps: add \`# /// script\\nrequires-python = ">=3.11"\\ndependencies = ["requests", "beautifulsoup4"]\\n# ///\` at top of .py file, then \`uv run script.py\`
+- Create a project: \`uv init my-project && cd my-project\`
+- Add dependencies: \`uv add requests pandas matplotlib\`
+- Run in project: \`uv run python main.py\`
+- NEVER use pip install or python -m venv — always UV
 
 ## Directory Rules & Persistence
 IMPORTANT: Only the path set in SHARED_FOLDER_PATH survives restarts.

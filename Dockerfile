@@ -18,14 +18,21 @@ COPY . .
 # ---------------------------------------------------------------------------
 FROM oven/bun:latest
 
-# System dependencies
+# System dependencies + Python ecosystem
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ffmpeg \
     python3 \
+    python3-pip \
+    python3-venv \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+
+# Install UV (fast Python package manager — replaces pip/venv for scripts)
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && mv /root/.local/bin/uvx /usr/local/bin/uvx
 
 # Non-root user (UID 1001 matches Rachel Cloud orchestrator expectations)
 RUN groupadd -g 1001 rachel && useradd -m -u 1001 -g rachel rachel
