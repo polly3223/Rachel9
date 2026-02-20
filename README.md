@@ -4,6 +4,8 @@ A personal AI assistant that lives in your Telegram. Powered by [Z.ai](https://z
 
 Rachel can read and create documents, search the web, write and run code, manage your WhatsApp, schedule tasks, remember things about you, and much more — all through a simple Telegram chat.
 
+**Don't want to self-host?** Get a fully managed Rachel at [get-rachel.com](https://get-rachel.com) — no setup, no server, just start chatting.
+
 ## Features
 
 - **Telegram-native** — chat naturally, send voice messages, photos, documents
