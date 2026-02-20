@@ -5,9 +5,11 @@
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "setup": "bun run src/setup/wizard.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.0.1",
     "@grammyjs/auto-chat-action": "^0.1.1",
     "@mariozechner/pi-agent-core": "^0.53.1",
     "@mariozechner/pi-ai": "^0.53.1",
