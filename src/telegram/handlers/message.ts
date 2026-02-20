@@ -38,17 +38,17 @@ export async function processAgentPrompt(
   logText?: string,
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
-    // Auto-chat-action plugin: loops "typing" every 5s until handler completes
-    ctx.chatAction = "typing";
-
     try {
-
       // Log user message to daily log (fire-and-forget)
       void appendToDailyLog("user", logText ?? prompt);
 
       // Send placeholder message for streaming
       const placeholder = await ctx.reply("...");
       const messageId = placeholder.message_id;
+
+      // Start typing indicator AFTER placeholder — sending a message clears
+      // the typing indicator, so we set it after ctx.reply()
+      ctx.chatAction = "typing";
 
       // State for throttled editing
       let accumulatedText = "";
