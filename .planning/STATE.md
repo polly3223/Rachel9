@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase:** Phase 4 complete — ready for Phase 5
-**Status:** Bot with persistent memory, daily logs, session persistence, and context overflow recovery. MVP milestone reached.
+**Phase:** Phase 5 complete — ready for Phase 6
+**Status:** Feature-rich bot ready for daily use. Task scheduler, all media types, STT, send-file CLI. Deploy-ready.
 
 ## Progress
 
@@ -13,7 +13,7 @@
 | Phase 2: Agent Core | ✅ Complete | AGENT-01 through AGENT-11, AGENT-14. 10 tools, Z.ai GLM-5 |
 | Phase 3: Telegram Transport | ✅ Complete | TG-01, TG-10 to TG-15. Streaming, auth, queue |
 | Phase 4: Memory & Persistence | ✅ Complete | MEM-01 to MEM-06, AGENT-11/12. Daily logs, memory init, backward compat |
-| Phase 5: Tasks & Media | ⬜ Not started | — |
+| Phase 5: Tasks & Media | ✅ Complete | TASK-01 to TASK-09, TG-02 to TG-09. Scheduler, media, STT, send-file |
 | Phase 6: WhatsApp & Skills | ⬜ Not started | — |
 | Phase 7: Deployment & Self-Mgmt | ⬜ Not started | — |
 | Phase 8: Differentiators | ⬜ Not started | — |
@@ -36,4 +36,4 @@
 None currently.
 
 ---
-*Last updated: 2026-02-20 (Phase 4 complete)*
+*Last updated: 2026-02-20 (Phase 5 complete)*
