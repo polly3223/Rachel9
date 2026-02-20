@@ -9,6 +9,20 @@ import { errorMessage } from "../../lib/errors.ts";
 import { appendToDailyLog } from "../../lib/memory.ts";
 import { CONSTANTS } from "../../config/constants.ts";
 
+/** Interval for refreshing the "typing" indicator (Telegram expires it after ~5s). */
+const TYPING_INTERVAL_MS = 4000;
+
+/**
+ * Start a self-managed typing indicator loop.
+ * Returns a stop function. Sends immediately, then every 4s.
+ */
+function startTypingLoop(api: Api, chatId: number): () => void {
+  const send = () => { void api.sendChatAction(chatId, "typing").catch(() => {}); };
+  send(); // fire immediately
+  const interval = setInterval(send, TYPING_INTERVAL_MS);
+  return () => clearInterval(interval);
+}
+
 /**
  * Handle incoming text messages.
  * Routes to agent, streams response back via message editing.
@@ -38,6 +52,9 @@ export async function processAgentPrompt(
   logText?: string,
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
+    // Self-managed typing loop — works inside queued callbacks unlike the plugin
+    const stopTyping = startTypingLoop(ctx.api, chatId);
+
     try {
       // Log user message to daily log (fire-and-forget)
       void appendToDailyLog("user", logText ?? prompt);
@@ -45,10 +62,6 @@ export async function processAgentPrompt(
       // Send placeholder message for streaming
       const placeholder = await ctx.reply("...");
       const messageId = placeholder.message_id;
-
-      // Start typing indicator AFTER placeholder — sending a message clears
-      // the typing indicator, so we set it after ctx.reply()
-      ctx.chatAction = "typing";
 
       // State for throttled editing
       let accumulatedText = "";
@@ -104,6 +117,9 @@ export async function processAgentPrompt(
         }
         unsub();
 
+        // Stop typing BEFORE sending final response
+        stopTyping();
+
         // Send final response
         const finalText = result.response.trim() || "(No response)";
 
@@ -114,9 +130,11 @@ export async function processAgentPrompt(
       } catch (err) {
         unsub();
         if (editTimer) clearTimeout(editTimer);
+        stopTyping();
         throw err;
       }
     } catch (err) {
+      stopTyping();
       logger.error("Message handler error", { chatId, error: errorMessage(err) });
       try {
         await ctx.reply("Sorry, something went wrong. Please try again.");
