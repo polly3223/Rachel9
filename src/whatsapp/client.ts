@@ -116,8 +116,9 @@ async function startSock(): Promise<void> {
         sock = null;
         logger.info("WhatsApp logged out — session cleared");
       } else {
-        // 515 or any other disconnect — just call startSock() fresh
+        // 515 or any other disconnect — clean up old socket, then reconnect
         connectionStatus = "connecting";
+        try { sock?.end(undefined); } catch { /* best effort */ }
         sock = null;
         logger.info("Reconnecting to WhatsApp...");
         startSock();
@@ -175,6 +176,7 @@ async function startSock(): Promise<void> {
       }
       messageCache.set(jid, existing);
     }
+    evictOldChats();
   });
 }
 
@@ -367,6 +369,20 @@ export async function sendFile(to: string, filePath: string, caption?: string): 
 
 const messageCache: Map<string, proto.IWebMessageInfo[]> = new Map();
 const MAX_CACHED_PER_CHAT = 200;
+const MAX_CACHED_CHATS = 50; // Global cap: evict oldest chats when exceeded
+
+/** Evict oldest chat entries when cache exceeds MAX_CACHED_CHATS */
+function evictOldChats(): void {
+  if (messageCache.size <= MAX_CACHED_CHATS) return;
+  // Map iteration order is insertion order — delete the oldest entries
+  const toDelete = messageCache.size - MAX_CACHED_CHATS;
+  let deleted = 0;
+  for (const key of messageCache.keys()) {
+    if (deleted >= toDelete) break;
+    messageCache.delete(key);
+    deleted++;
+  }
+}
 
 // setupMessageListener is now a no-op — messages are listened in startSock()
 export function setupMessageListener(): void {}
