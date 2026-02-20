@@ -74,6 +74,8 @@ class StreamingMessage {
   }
 
   private async doUpdate(text: string): Promise<void> {
+    if (!text.trim()) return; // Skip empty updates
+
     const truncated = text.length > CONSTANTS.STREAM_EDIT_TRUNCATE
       ? text.slice(0, CONSTANTS.STREAM_EDIT_TRUNCATE) + "\n\n_... (streaming)_"
       : text;
