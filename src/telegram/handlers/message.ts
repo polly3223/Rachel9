@@ -59,9 +59,9 @@ export async function processAgentPrompt(
       // Log user message to daily log (fire-and-forget)
       void appendToDailyLog("user", logText ?? prompt);
 
-      // Send placeholder message for streaming
-      const placeholder = await ctx.reply("...");
-      const messageId = placeholder.message_id;
+      // No placeholder message — typing indicator is enough.
+      // We'll send the first message when we have real text to show.
+      let messageId: number | null = null;
 
       // State for throttled editing
       let accumulatedText = "";
@@ -78,10 +78,10 @@ export async function processAgentPrompt(
             .map((c) => c.text as string);
           accumulatedText = textParts.join("\n");
 
-          // Throttled edit
+          // Throttled edit (or first send)
           const now = Date.now();
           if (now - lastEditTime >= CONSTANTS.STREAM_THROTTLE_MS) {
-            void doEdit(ctx.api, chatId, messageId, accumulatedText);
+            void doStreamUpdate(ctx.api, chatId, accumulatedText, messageId, (id) => { messageId = id; });
             lastEditTime = now;
             if (editTimer) {
               clearTimeout(editTimer);
@@ -90,7 +90,7 @@ export async function processAgentPrompt(
           } else if (!editTimer) {
             const delay = CONSTANTS.STREAM_THROTTLE_MS - (now - lastEditTime);
             editTimer = setTimeout(() => {
-              void doEdit(ctx.api, chatId, messageId, accumulatedText);
+              void doStreamUpdate(ctx.api, chatId, accumulatedText, messageId, (id) => { messageId = id; });
               lastEditTime = Date.now();
               editTimer = null;
             }, delay);
@@ -101,7 +101,7 @@ export async function processAgentPrompt(
           const toolIndicator = accumulatedText
             ? `${accumulatedText}\n\n_🔧 ${event.toolName}..._`
             : `_🔧 ${event.toolName}..._`;
-          void doEdit(ctx.api, chatId, messageId, toolIndicator);
+          void doStreamUpdate(ctx.api, chatId, toolIndicator, messageId, (id) => { messageId = id; });
           lastEditTime = Date.now();
         }
       });
@@ -110,15 +110,15 @@ export async function processAgentPrompt(
         // Run agent (blocks until all turns complete)
         const result = await agentPrompt(chatId, prompt);
 
+        // Stop typing immediately
+        stopTyping();
+
         // Clean up streaming state
         if (editTimer) {
           clearTimeout(editTimer);
           editTimer = null;
         }
         unsub();
-
-        // Stop typing BEFORE sending final response
-        stopTyping();
 
         // Send final response
         const finalText = result.response.trim() || "(No response)";
@@ -128,9 +128,9 @@ export async function processAgentPrompt(
 
         await sendFinalResponse(ctx, chatId, messageId, finalText);
       } catch (err) {
+        stopTyping();
         unsub();
         if (editTimer) clearTimeout(editTimer);
-        stopTyping();
         throw err;
       }
     } catch (err) {
@@ -146,42 +146,61 @@ export async function processAgentPrompt(
 }
 
 /**
- * Edit message during streaming. Swallows errors to avoid crashing the stream.
+ * Send or edit a streaming update.
+ * If no message exists yet, sends a new one and reports the ID via callback.
+ * If a message exists, edits it.
  */
-async function doEdit(api: Api, chatId: number, messageId: number, text: string): Promise<void> {
+async function doStreamUpdate(
+  api: Api,
+  chatId: number,
+  text: string,
+  messageId: number | null,
+  onNewMessage: (id: number) => void,
+): Promise<void> {
   try {
     const truncated = text.length > CONSTANTS.STREAM_EDIT_TRUNCATE
       ? text.slice(0, CONSTANTS.STREAM_EDIT_TRUNCATE) + "\n\n_... (streaming)_"
       : text;
-    await editFormattedMessage(api, chatId, messageId, truncated);
+
+    if (messageId === null) {
+      // First chunk — send a new message
+      const id = await sendFormattedMessage(api, chatId, truncated);
+      onNewMessage(id);
+    } else {
+      // Subsequent chunks — edit existing
+      await editFormattedMessage(api, chatId, messageId, truncated);
+    }
   } catch {
-    // Swallow — streaming edits are best-effort
+    // Swallow — streaming updates are best-effort
   }
 }
 
 /**
- * Send the final response: edit the placeholder with full text,
- * or split into multiple messages if too long.
- * If the edit fails, delete the placeholder and send a fresh message.
+ * Send the final response.
+ * If we already have a streaming message, edit it. Otherwise send new.
+ * Falls back to deleting stale message and sending fresh if edit fails.
  */
 async function sendFinalResponse(
   ctx: BotContext,
   chatId: number,
-  messageId: number,
+  messageId: number | null,
   text: string,
 ): Promise<void> {
   const parts = splitMessage(text);
 
-  // First part: try to edit the placeholder
-  try {
-    await editFormattedMessage(ctx.api, chatId, messageId, parts[0]!);
-  } catch {
-    // Edit failed — delete the stale placeholder and send fresh
+  if (messageId !== null) {
+    // Edit the streaming message with final content
     try {
-      await ctx.api.deleteMessage(chatId, messageId);
+      await editFormattedMessage(ctx.api, chatId, messageId, parts[0]!);
     } catch {
-      // Placeholder already gone — fine
+      // Edit failed — delete stale message and send fresh
+      try {
+        await ctx.api.deleteMessage(chatId, messageId);
+      } catch { /* already gone */ }
+      await sendFormattedMessage(ctx.api, chatId, parts[0]!);
     }
+  } else {
+    // No streaming message was sent — send the full response as new
     await sendFormattedMessage(ctx.api, chatId, parts[0]!);
   }
 
