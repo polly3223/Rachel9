@@ -2,8 +2,8 @@
 
 ## Current Phase
 
-**Phase:** Phase 5 complete — ready for Phase 6
-**Status:** Feature-rich bot ready for daily use. Task scheduler, all media types, STT, send-file CLI. Deploy-ready.
+**Phase:** Phase 6 complete — ready for Phase 7
+**Status:** Full Rachel8 feature parity. WhatsApp bridge, 12 skills, all media, task scheduler.
 
 ## Progress
 
@@ -14,7 +14,7 @@
 | Phase 3: Telegram Transport | ✅ Complete | TG-01, TG-10 to TG-15. Streaming, auth, queue |
 | Phase 4: Memory & Persistence | ✅ Complete | MEM-01 to MEM-06, AGENT-11/12. Daily logs, memory init, backward compat |
 | Phase 5: Tasks & Media | ✅ Complete | TASK-01 to TASK-09, TG-02 to TG-09. Scheduler, media, STT, send-file |
-| Phase 6: WhatsApp & Skills | ⬜ Not started | — |
+| Phase 6: WhatsApp & Skills | ✅ Complete | WA-01 to WA-11, SKILL-01 to SKILL-03. WhatsApp as skill, 12 skills ported |
 | Phase 7: Deployment & Self-Mgmt | ⬜ Not started | — |
 | Phase 8: Differentiators | ⬜ Not started | — |
 
@@ -30,10 +30,11 @@
 | Deploy after Phase 5 for testing | 2026-02-19 | Slow rollout in Lorenzo's container |
 | Z.ai uses openai-completions API | 2026-02-20 | Not Anthropic format — pi-ai handles it natively |
 | createCodingTools + individual creators | 2026-02-20 | createAllTools not in npm published version |
+| WhatsApp as a skill, not special code | 2026-02-20 | CLI-driven, agent uses bash tool — no special integration needed |
 
 ## Blockers
 
 None currently.
 
 ---
-*Last updated: 2026-02-20 (Phase 5 complete)*
+*Last updated: 2026-02-20 (Phase 6 complete)*
