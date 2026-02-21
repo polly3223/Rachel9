@@ -240,32 +240,26 @@ export async function processAgentPrompt(
 
 /**
  * Send the final response.
- * If we already have a streaming message, edit it with the complete text.
- * If no streaming message was created (e.g. very fast response), send new.
- * Falls back to deleting stale message + sending fresh if edit fails.
+ * Always sends as a NEW message (not an edit) so the user gets a Telegram
+ * notification and long responses auto-split into multiple messages.
+ * If a streaming message exists, delete it first (it was just progress).
  */
 async function sendFinalResponse(
   ctx: BotContext,
   chatId: number,
-  messageId: number | null,
+  streamingMessageId: number | null,
   text: string,
 ): Promise<void> {
-  const parts = splitMessage(text);
-
-  if (messageId !== null) {
+  // Delete the streaming progress message (if any)
+  if (streamingMessageId !== null) {
     try {
-      await editFormattedMessage(ctx.api, chatId, messageId, parts[0]!);
-    } catch {
-      try {
-        await ctx.api.deleteMessage(chatId, messageId);
-      } catch { /* already gone */ }
-      await sendFormattedMessage(ctx.api, chatId, parts[0]!);
-    }
-  } else {
-    await sendFormattedMessage(ctx.api, chatId, parts[0]!);
+      await ctx.api.deleteMessage(chatId, streamingMessageId);
+    } catch { /* already gone */ }
   }
 
-  for (let i = 1; i < parts.length; i++) {
-    await sendFormattedMessage(ctx.api, chatId, parts[i]!);
+  // Send final response as new message(s) — triggers notification
+  const parts = splitMessage(text);
+  for (const part of parts) {
+    await sendFormattedMessage(ctx.api, chatId, part);
   }
 }
