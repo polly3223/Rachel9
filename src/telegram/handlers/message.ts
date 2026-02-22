@@ -86,11 +86,9 @@ export async function handleTextMessage(ctx: BotContext): Promise<void> {
  * Process an agent prompt and send the response.
  *
  * Flow:
- * 1. Send "…" placeholder immediately (user sees we're working)
- * 2. Start typing indicator loop
- * 3. Run agent (no streaming — wait for full response)
- * 4. Delete "…" placeholder
- * 5. Send final response as new message(s) — triggers notification, auto-splits
+ * 1. Start typing indicator loop
+ * 2. Run agent (wait for full response)
+ * 3. Send final response as new message(s)
  */
 export async function processAgentPrompt(
   ctx: BotContext,
@@ -99,15 +97,6 @@ export async function processAgentPrompt(
   logText?: string,
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
-    // Send "…" placeholder immediately
-    let placeholderId: number | null = null;
-    try {
-      const msg = await ctx.api.sendMessage(chatId, "…");
-      placeholderId = msg.message_id;
-    } catch {
-      // Failed to send placeholder — continue anyway
-    }
-
     const stopTyping = startTypingLoop(ctx.api, chatId);
 
     try {
@@ -116,13 +105,6 @@ export async function processAgentPrompt(
       const result = await agentPrompt(chatId, prompt);
 
       stopTyping();
-
-      // Delete placeholder
-      if (placeholderId !== null) {
-        try {
-          await ctx.api.deleteMessage(chatId, placeholderId);
-        } catch { /* already gone */ }
-      }
 
       // Send final response as new message(s)
       const finalText = result.response.trim() || "(No response)";
@@ -134,13 +116,6 @@ export async function processAgentPrompt(
       }
     } catch (err) {
       stopTyping();
-
-      // Delete placeholder on error too
-      if (placeholderId !== null) {
-        try {
-          await ctx.api.deleteMessage(chatId, placeholderId);
-        } catch { /* already gone */ }
-      }
 
       logger.error("Message handler error", { chatId, error: errorMessage(err) });
       try {
