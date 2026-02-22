@@ -154,21 +154,14 @@ export async function findDuplicate(
 }
 
 // ---------------------------------------------------------------------------
-// Date formatting — always use "22 Feb 2026" or "22 Feb 2026 15:45"
+// Date formatting — always ISO 8601 UTC: "2026-02-22T15:41Z"
 // ---------------------------------------------------------------------------
 
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** Format a Date to "22 Feb 2026" */
+/** Format a Date to ISO 8601 UTC: "2026-02-22T15:41Z" */
 export function formatDate(d: Date = new Date()): string {
-  return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
-}
-
-/** Format a Date to "22 Feb 2026 15:45" */
-export function formatDateTime(d: Date = new Date()): string {
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${formatDate(d)} ${hh}:${mm}`;
+  const iso = d.toISOString(); // "2026-02-22T15:41:23.456Z"
+  // Truncate to minutes: "2026-02-22T15:41Z"
+  return iso.slice(0, 16) + "Z";
 }
 
 // ---------------------------------------------------------------------------
