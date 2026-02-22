@@ -23,7 +23,25 @@ bot.use(authGuard);
 bot.use(autoChatAction());
 
 // Commands
-bot.command("start", (ctx) => ctx.reply("Hello! I'm Rachel, your personal AI assistant."));
+bot.command("start", (ctx) => ctx.reply(
+`Hey! I'm Rachel, your personal AI assistant 👋
+
+Here's what I can do for you:
+
+📇 *CRM* — Send me contacts from WhatsApp groups, LinkedIn screenshots, or business cards and I'll organize them for you. I track follow-ups and brief you with full context when it's time to reach out.
+
+🌐 *Landing pages* — Tell me what you need and I'll build it, publish it, and track who signs up.
+
+📄 *Documents* — Proposals, reports, presentations — just describe what you need.
+
+🔍 *Research* — Find suppliers, analyze competitors, compare options — I deliver a summary in minutes.
+
+✍️ *Content* — Emails, social posts, translations — all from a quick message.
+
+⏰ *Scheduling* — Reminders, follow-ups, deadlines — I keep track so you don't have to.
+
+Just message me what you need. I'm here 24/7.`, { parse_mode: "Markdown" }
+));
 
 // Message handlers
 bot.on("message:text", handleTextMessage);
