@@ -1,5 +1,31 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Security: Load secrets from file if available (Docker entrypoint strips
+// sensitive env vars so the agent's bash tool can't leak them).
+// ---------------------------------------------------------------------------
+function loadSecrets(): void {
+  const secretsFile = process.env["RACHEL_SECRETS_FILE"];
+  if (!secretsFile || !existsSync(secretsFile)) return;
+
+  const content = readFileSync(secretsFile, "utf-8");
+  for (const line of content.split("\n")) {
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    const value = line.slice(eq + 1).trim();
+    if (value) {
+      process.env[key] = value;
+    }
+  }
+
+  // Delete the secrets file immediately — it's no longer needed
+  try { unlinkSync(secretsFile); } catch {}
+  delete process.env["RACHEL_SECRETS_FILE"];
+}
+
+loadSecrets();
 
 export const envSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().regex(/^\d{8,}:[A-Za-z0-9_-]{35,}$/, {
@@ -54,3 +80,23 @@ function loadEnv(): Env {
 }
 
 export const env: Env = loadEnv();
+
+// ---------------------------------------------------------------------------
+// Security: Remove sensitive env vars from process.env so the agent's bash
+// tool cannot leak them (e.g., `printenv GEMINI_API_KEY`).
+// The values are already captured in the `env` object above and passed to
+// the model provider via getApiKey() — they don't need to stay in process.env.
+// ---------------------------------------------------------------------------
+const SENSITIVE_KEYS = [
+  "GEMINI_API_KEY",
+  "ZAI_API_KEY",
+  "GROQ_API_KEY",
+  "OPENAI_API_KEY",
+  "TELEGRAM_BOT_TOKEN",
+] as const;
+
+for (const key of SENSITIVE_KEYS) {
+  delete process.env[key];
+  // Bun.env is a proxy over process.env, but delete to be safe
+  delete (Bun.env as Record<string, unknown>)[key];
+}

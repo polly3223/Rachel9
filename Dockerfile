@@ -56,4 +56,7 @@ EXPOSE 8443
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD curl -sf http://localhost:8443/health || exit 1
 
-CMD ["bun", "run", "src/index.ts"]
+COPY --chown=rachel:rachel entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+CMD ["/app/entrypoint.sh"]
