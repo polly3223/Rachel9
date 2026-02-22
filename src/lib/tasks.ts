@@ -10,7 +10,7 @@ import { CONSTANTS } from "../config/constants.ts";
 export interface TaskRow {
   id: number;
   name: string;
-  type: "bash" | "reminder" | "cleanup" | "agent";
+  type: "bash" | "cleanup" | "agent";
   data: string;
   cron: string | null;
   next_run: number;
@@ -126,17 +126,6 @@ async function executeTask(task: TaskRow): Promise<void> {
         }
       } catch (err) {
         logger.error("Bash task failed", { name: task.name, error: errorMessage(err) });
-      }
-      break;
-    }
-
-    case "reminder": {
-      const message = String(data["message"] ?? "Reminder!");
-      logger.info("Sending reminder", { name: task.name });
-      if (telegramSender) {
-        await telegramSender(message);
-      } else {
-        logger.warn("No Telegram sender registered for reminder task");
       }
       break;
     }

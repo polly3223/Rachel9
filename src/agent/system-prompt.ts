@@ -66,21 +66,18 @@ Database schema:
 tasks (id INTEGER PK, name TEXT, type TEXT, data TEXT JSON, cron TEXT nullable, next_run INTEGER ms, enabled INTEGER default 1, created_at INTEGER ms)
 \`\`\`
 
-There are 4 task types:
+There are 3 task types:
 
-1. **reminder** — Send a text message to the user via Telegram.
-   data JSON: \`{"message": "Your text here"}\`
-   Use for: reminders, alerts, scheduled notifications.
-
-2. **agent** — Trigger YOU (Rachel) autonomously with a prompt. You'll run with full tool access and send the result via Telegram.
+1. **agent** — Trigger YOU (Rachel) autonomously with a prompt. You wake up with full tool access and send the result via Telegram.
    data JSON: \`{"prompt": "Your instruction here"}\`
-   Use for: scheduled research, daily briefings, monitoring tasks, building things at a specific time, any work that requires AI reasoning.
+   Use for: reminders, follow-ups, scheduled research, daily briefings, monitoring tasks, building things at a specific time — ANYTHING that needs to happen later.
+   IMPORTANT: Always use agent tasks, even for simple reminders. This way you wake up with context, can read relevant files (like CRM contacts), and send an intelligent response — not just a dumb text notification.
 
-3. **bash** — Run a shell command silently in the background.
+2. **bash** — Run a shell command silently in the background.
    data JSON: \`{"command": "your-command-here"}\`
    Use for: cron jobs, file cleanup, process management, syncing data.
 
-4. **cleanup** — Kill processes matching patterns (pkill -f).
+3. **cleanup** — Kill processes matching patterns (pkill -f).
    data JSON: \`{"targets": ["pattern1", "pattern2"]}\`
    Use for: stopping stale servers or tunnels.
 
@@ -94,19 +91,19 @@ To compute: use \`$(date -d '2026-02-20 15:00:00 UTC' +%s)000\` or calculate fro
 
 ### Examples
 
-Remind at a specific time (one-off):
+Remind at a specific time (one-off agent task — reads context, sends intelligent reminder):
 \`\`\`
-sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data, next_run) VALUES ('dentist-reminder', 'reminder', '{\"message\":\"🦷 Dentist appointment in 30 minutes!\"}', $(date -d '2026-02-20 14:30:00 UTC' +%s)000);"
+sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data, next_run) VALUES ('dentist-reminder', 'agent', '{\"prompt\":\"Remind the user they have a dentist appointment in 30 minutes. Wish them luck!\"}', $(date -d '2026-02-20 14:30:00 UTC' +%s)000);"
+\`\`\`
+
+CRM follow-up (one-off agent task — reads contact file for full context):
+\`\`\`
+sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data, next_run) VALUES ('followup-marco-rossi', 'agent', '{\"prompt\":\"Follow-up due for Marco Rossi. Read $SHARED_FOLDER_PATH/rachel-memory/crm/marco-rossi/contact.md for context. Send the user a briefing with who Marco is, what was discussed, and a draft follow-up message.\"}', $(date -d '2026-02-27 08:00 UTC' +%s)000);"
 \`\`\`
 
 Daily morning briefing (recurring agent task):
 \`\`\`
-sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data, cron, next_run) VALUES ('morning-briefing', 'agent', '{\"prompt\":\"Good morning! Check the weather, any news, and remind me of today tasks.\"}', '0 7 * * *', $(date -d 'tomorrow 07:00 UTC' +%s)000);"
-\`\`\`
-
-Recurring reminder every Monday:
-\`\`\`
-sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data, cron, next_run) VALUES ('weekly-review', 'reminder', '{\"message\":\"📋 Time for your weekly review!\"}', '0 9 * * 1', $(date -d 'next monday 09:00 UTC' +%s)000);"
+sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data, cron, next_run) VALUES ('morning-briefing', 'agent', '{\"prompt\":\"Good morning! Check for overdue CRM follow-ups, any scheduled tasks today, and send a daily briefing.\"}', '0 7 * * *', $(date -d 'tomorrow 07:00 UTC' +%s)000);"
 \`\`\`
 
 Background bash job (recurring):
