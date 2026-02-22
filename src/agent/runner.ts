@@ -1,6 +1,6 @@
 import { Agent, type AgentEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
-import type { AssistantMessage, Message } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ImageContent, Message } from "@mariozechner/pi-ai";
 import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
 import { join } from "node:path";
 import { mkdirSync, existsSync } from "node:fs";
@@ -12,8 +12,15 @@ import { buildSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform } from "./compaction.ts";
 
-// Z.ai GLM-5 via pi-ai model registry
-const DEFAULT_MODEL = getModel("zai", "glm-5");
+// Pick model based on available API keys
+function resolveDefaultModel() {
+  if (env.GEMINI_API_KEY) {
+    return getModel("google", "gemini-3-flash-preview");
+  }
+  return getModel("zai", "glm-5");
+}
+
+const DEFAULT_MODEL = resolveDefaultModel();
 
 export interface AgentRunnerOptions {
   chatId: number;
@@ -64,7 +71,8 @@ export class AgentRunner {
       convertToLlm,
       transformContext: createContextTransform(),
       getApiKey: async (provider: string) => {
-        if (provider === "zai") return env.ZAI_API_KEY;
+        if (provider === "google") return env.GEMINI_API_KEY ?? undefined;
+        if (provider === "zai") return env.ZAI_API_KEY ?? undefined;
         if (provider === "anthropic") return Bun.env["ANTHROPIC_API_KEY"] ?? undefined;
         if (provider === "openai") return Bun.env["OPENAI_API_KEY"] ?? undefined;
         if (provider === "groq") return Bun.env["GROQ_API_KEY"] ?? undefined;
@@ -145,7 +153,7 @@ export class AgentRunner {
    * Send a message to the agent and get a response.
    * Handles session persistence, system prompt refresh, and error recovery.
    */
-  async prompt(text: string): Promise<PromptResult> {
+  async prompt(text: string, images?: ImageContent[]): Promise<PromptResult> {
     // Refresh system prompt (memory might have changed)
     this.agent.setSystemPrompt(buildSystemPrompt());
 
@@ -160,12 +168,12 @@ export class AgentRunner {
 
     try {
       // Run agent with timeout to prevent indefinite hangs
-      logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, existingMessages: this.agent.state.messages.length });
+      logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: this.agent.state.messages.length });
       const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error("Agent prompt timed out after 10 minutes")), TIMEOUT_MS);
       });
-      await Promise.race([this.agent.prompt(text), timeoutPromise]);
+      await Promise.race([this.agent.prompt(text, images), timeoutPromise]);
       logger.info("Agent prompt completed", { chatId: this.chatId });
 
       // Extract response text from last assistant message

@@ -1,5 +1,6 @@
 import { AgentRunner, type PromptResult, type AgentEventCallback } from "./runner.ts";
 import type { ToolDependencies } from "./tools/index.ts";
+import type { ImageContent } from "@mariozechner/pi-ai";
 import { logger } from "../lib/logger.ts";
 
 /**
@@ -39,9 +40,9 @@ function getOrCreateRunner(chatId: number): AgentRunner {
  * Send a message to the agent for a specific chat and get a response.
  * Creates an AgentRunner lazily if one doesn't exist.
  */
-export async function agentPrompt(chatId: number, text: string): Promise<PromptResult> {
+export async function agentPrompt(chatId: number, text: string, images?: ImageContent[]): Promise<PromptResult> {
   const runner = getOrCreateRunner(chatId);
-  return runner.prompt(text);
+  return runner.prompt(text, images);
 }
 
 /**

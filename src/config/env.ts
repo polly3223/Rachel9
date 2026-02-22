@@ -17,9 +17,8 @@ export const envSchema = z.object({
     .enum(["development", "production", "test"])
     .default("production"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  ZAI_API_KEY: z.string().min(1, {
-    message: "Z.ai API key required. Get from Z.ai Pro dashboard",
-  }),
+  ZAI_API_KEY: z.string().optional(),
+  GEMINI_API_KEY: z.string().optional(),
   // Agent behavior
   THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high"]).default("off"),
   // STT (optional — only needed for voice/audio transcription)
