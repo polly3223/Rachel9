@@ -13,12 +13,24 @@ bun run src/whatsapp/cli.ts <command> [args...]
 
 When the user asks to connect WhatsApp:
 
-1. Run: `bun run src/whatsapp/cli.ts connect-qr`
-2. This saves a QR code image at `$SHARED_FOLDER_PATH/whatsapp-qr.png`
-3. **Send the QR image to the user on Telegram**: `bun run src/telegram/send-file.ts $SHARED_FOLDER_PATH/whatsapp-qr.png "Scan this QR code: Open WhatsApp → Settings → Linked Devices → Link a Device"`
-4. Tell the user: "Open WhatsApp → Settings → Linked Devices → Link a Device → scan this QR"
-5. The script waits up to 120 seconds for the scan
-6. Once linked, the session persists — no need to scan again unless it expires (~14 days of inactivity)
+1. Clear any stale auth first: `rm -rf $SHARED_FOLDER_PATH/rachel-memory/whatsapp-auth/*` (only if session is known to be expired/401)
+2. Run `connect-qr` in the background so it stays alive waiting for the scan:
+   ```bash
+   nohup bun run src/whatsapp/cli.ts connect-qr > /tmp/wa-connect.log 2>&1 &
+   ```
+3. Wait a few seconds for the QR to be generated, then check:
+   ```bash
+   sleep 5 && grep -q "QR code saved" /tmp/wa-connect.log && echo "QR ready"
+   ```
+4. **Send the QR image to the user on Telegram**: `bun run src/telegram/send-file.ts $SHARED_FOLDER_PATH/whatsapp-qr.png "Scan this QR code: Open WhatsApp → Settings → Linked Devices → Link a Device"`
+5. Tell the user to just scan it — **do NOT ask them to tell you when done**. The background process detects the scan automatically.
+6. Before any subsequent WhatsApp command, check the log or run `status`:
+   ```bash
+   grep "connected successfully\|connected" /tmp/wa-connect.log
+   ```
+7. Once linked, the session persists — no need to scan again unless it expires (~14 days of inactivity)
+
+**Important UX**: Never ask the user "tell me when you've scanned" — the process detects it on its own. Just send the QR and move on. If the user gives you a WhatsApp task afterward, `ensureConnected()` will pick up the saved session automatically.
 
 The QR method is more reliable. The session is created with `syncFullHistory: true`, so push names (WhatsApp display names) get synced and persisted to disk automatically.
 
