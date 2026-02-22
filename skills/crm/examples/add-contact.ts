@@ -15,7 +15,7 @@ import matter from "gray-matter";
 import { join } from "node:path";
 import {
   CONTACTS_DIR, slugify, normalizePhone, normalizeEmail, ensureArray,
-  normalizeContactData, allContacts, findDuplicate, readContact,
+  normalizeContactData, allContacts, findDuplicate, readContact, formatDate,
 } from "./lib.ts";
 import { mkdirSync, existsSync } from "node:fs";
 
@@ -41,7 +41,7 @@ const newEmails = flags.email ? flags.email.split(",").map(s => normalizeEmail(s
 const contacts = await allContacts();
 const dupSlug = await findDuplicate(newPhones, newEmails, name, contacts);
 
-const today = new Date().toISOString().split("T")[0];
+const today = formatDate();
 
 if (dupSlug) {
   // --- MERGE into existing ---

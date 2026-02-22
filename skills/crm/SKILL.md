@@ -65,9 +65,9 @@ location: Turin, Italy
 tags: [lead, networker, real-estate]
 lists: [hot-leads, networkers-turin]
 source: WhatsApp group - Imprenditori Torino
-met: 2026-02-15
-last_contact: 2026-02-20
-next_followup: 2026-02-27
+met: 15 Feb 2026
+last_contact: 20 Feb 2026
+next_followup: 27 Feb 2026
 relationship: warm
 linkedin: https://linkedin.com/in/marcorossi
 instagram: marcorossi
@@ -79,10 +79,10 @@ whatsapp: "+393428812201"
 - Interested in AI for his sales team
 
 ## Interactions
-### 2026-02-20
+### 20 Feb 2026
 Called, discussed Rachel demo. Wants to see landing page feature.
 
-### 2026-02-15
+### 15 Feb 2026
 First contact at event. Exchanged numbers.
 ```
 
@@ -96,7 +96,7 @@ Fields that CAN have multiple values are ALWAYS stored as arrays, even if there'
 
 Fields that are inherently singular are always strings:
 - `name`, `company`, `role`, `location`, `source`, `relationship` — always string
-- `met`, `last_contact`, `next_followup` — always string (ISO date)
+- `met`, `last_contact`, `next_followup`, `added`, `enriched` — always string, format: `22 Feb 2026` (or `22 Feb 2026 15:45` if time matters)
 - `linkedin`, `instagram`, `twitter`, `website`, `whatsapp` — always string
 
 ### Phone Number Normalization
@@ -164,6 +164,50 @@ For WhatsApp group imports, CSV imports, or any bulk operation:
 4. For each entry: check duplicates → merge or create
 5. Report: "Created X new, merged Y existing, Z total"
 
+## Contact Enrichment — Screenshots, Images & Documents
+
+Rachel is multimodal. Users can enrich contacts by simply sending images or documents on Telegram — no APIs, no login, no credits.
+
+### Supported Enrichment Sources
+
+| Source | What to extract |
+|--------|----------------|
+| **LinkedIn profile screenshot** | Full name, headline/role, company, location, education, LinkedIn URL (reconstruct from name slug) |
+| **Business card photo** | Name, role, company, phone, email, address, website |
+| **Instagram profile screenshot** | Display name, bio, handle, follower count, links |
+| **Email signature screenshot** | Name, role, company, phone, email, social links |
+| **Website about page screenshot** | Name, role, company, description |
+| **Event badge / name tag photo** | Name, company, event name |
+| **Any document (PDF, etc.)** | Extract contact info, associate file with contact dir |
+
+### Enrichment Flow
+
+1. User sends an image/screenshot/document on Telegram
+2. Rachel reads it (multimodal) and extracts all visible contact data
+3. Rachel matches to an existing CRM contact by name, phone, or email
+4. If match found → **merge** new data into existing contact (fill empty fields, don't overwrite)
+5. If no match → ask user or create new contact
+6. Add `enriched` date and `enriched_via` field (e.g. `linkedin-screenshot`, `business-card`, `instagram`)
+7. Log what was enriched in the Notes section
+8. If a file (PDF, image, etc.) should be kept → save it in the contact's directory
+
+### Enrichment Fields
+
+When enriching, add these metadata fields:
+- `enriched: 22 Feb 2026` — when enrichment happened
+- `enriched_via: linkedin-screenshot` — source type
+- `education`, `company`, `role`, `location` — fill from what's visible
+- `linkedin`, `instagram`, `twitter`, `website` — reconstruct URLs when possible (e.g. name "Marco Rossi" on LinkedIn → `https://www.linkedin.com/in/marco-rossi`)
+
+### Key Rules for Enrichment
+
+1. NEVER overwrite existing data — only fill empty fields or add to arrays
+2. When renaming a contact dir (e.g. "peter" → "peter-rosso"), move the entire directory
+3. Always add an enrichment note with date and source
+4. If user sends a screenshot and says "this is [name]", match by name in CRM first
+5. If the image contains data for multiple people, ask user which one to enrich or process all
+6. Store the original screenshot/image in the contact dir if useful for reference
+
 ## Follow-ups & Reminders
 
 CRITICAL: Never use "reminder" type tasks. Always use "agent" type tasks.
@@ -177,7 +221,7 @@ sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data
   'followup-marco-rossi',
   'agent',
   '{\"prompt\":\"Follow-up due for Marco Rossi. Read $SHARED_FOLDER_PATH/rachel-memory/crm/contacts/marco-rossi/contact.md for full context. Review latest interactions, send the user: 1) who Marco is and what is pending, 2) suggested action, 3) draft message if appropriate. Update last_contact and ask about next follow-up.\"}',
-  $(date -d '2026-02-27 09:00 UTC' +%s)000
+  $(date -d '27 Feb 2026 09:00 UTC' +%s)000
 );"
 ```
 
