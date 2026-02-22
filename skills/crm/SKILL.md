@@ -65,9 +65,9 @@ location: Turin, Italy
 tags: [lead, networker, real-estate]
 lists: [hot-leads, networkers-turin]
 source: WhatsApp group - Imprenditori Torino
-met: 2026-02-15T18:00Z
-last_contact: 2026-02-20T14:30Z
-next_followup: 2026-02-27T09:00Z
+met: 2026-02-15T18:00:00Z
+last_contact: 2026-02-20T14:30:00Z
+next_followup: 2026-02-27T09:00:00Z
 relationship: warm
 linkedin: https://linkedin.com/in/marcorossi
 instagram: marcorossi
@@ -79,10 +79,10 @@ whatsapp: "+393428812201"
 - Interested in AI for his sales team
 
 ## Interactions
-### 2026-02-20T14:30Z
+### 2026-02-20T14:30:00Z
 Called, discussed Rachel demo. Wants to see landing page feature.
 
-### 2026-02-15T18:00Z
+### 2026-02-15T18:00:00Z
 First contact at event. Exchanged numbers.
 ```
 
@@ -96,7 +96,7 @@ Fields that CAN have multiple values are ALWAYS stored as arrays, even if there'
 
 Fields that are inherently singular are always strings:
 - `name`, `company`, `role`, `location`, `source`, `relationship` — always string
-- `met`, `last_contact`, `next_followup`, `added`, `enriched` — always string, ISO 8601 UTC: `2026-02-22T15:41Z`
+- `met`, `last_contact`, `next_followup`, `added`, `enriched` — always string, ISO 8601 UTC: `2026-02-22T15:41:00Z`
 - `linkedin`, `instagram`, `twitter`, `website`, `whatsapp` — always string
 
 ### Phone Number Normalization
@@ -194,7 +194,7 @@ Rachel is multimodal. Users can enrich contacts by simply sending images or docu
 ### Enrichment Fields
 
 When enriching, add these metadata fields:
-- `enriched: 2026-02-22T15:30Z` — when enrichment happened
+- `enriched: 2026-02-22T15:30:00Z` — when enrichment happened
 - `enriched_via: linkedin-screenshot` — source type
 - `education`, `company`, `role`, `location` — fill from what's visible
 - `linkedin`, `instagram`, `twitter`, `website` — reconstruct URLs when possible (e.g. name "Marco Rossi" on LinkedIn → `https://www.linkedin.com/in/marco-rossi`)
@@ -221,7 +221,7 @@ sqlite3 $SHARED_FOLDER_PATH/rachel9/data.db "INSERT INTO tasks (name, type, data
   'followup-marco-rossi',
   'agent',
   '{\"prompt\":\"Follow-up due for Marco Rossi. Read $SHARED_FOLDER_PATH/rachel-memory/crm/contacts/marco-rossi/contact.md for full context. Review latest interactions, send the user: 1) who Marco is and what is pending, 2) suggested action, 3) draft message if appropriate. Update last_contact and ask about next follow-up.\"}',
-  $(date -d '2026-02-27T09:00Z' +%s)000
+  $(date -d '2026-02-27T09:00:00Z' +%s)000
 );"
 ```
 

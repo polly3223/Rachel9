@@ -154,14 +154,15 @@ export async function findDuplicate(
 }
 
 // ---------------------------------------------------------------------------
-// Date formatting — always ISO 8601 UTC: "2026-02-22T15:41Z"
+// Date formatting — ISO 8601 UTC, Zod-compatible: "2026-02-22T15:41:00Z"
+// See: https://zod.dev/api?id=dates — z.iso.datetime() format
 // ---------------------------------------------------------------------------
 
-/** Format a Date to ISO 8601 UTC: "2026-02-22T15:41Z" */
+/** Format a Date to ISO 8601 UTC (Zod-compatible): "2026-02-22T15:41:00Z" */
 export function formatDate(d: Date = new Date()): string {
   const iso = d.toISOString(); // "2026-02-22T15:41:23.456Z"
-  // Truncate to minutes: "2026-02-22T15:41Z"
-  return iso.slice(0, 16) + "Z";
+  // Truncate to seconds (no ms): "2026-02-22T15:41:23Z"
+  return iso.slice(0, 19) + "Z";
 }
 
 // ---------------------------------------------------------------------------
