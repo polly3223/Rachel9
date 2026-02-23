@@ -126,6 +126,14 @@ export async function processAgentPrompt(
       const finalText = result.response.trim() || "(No response)";
       void appendToDailyLog("assistant", finalText);
 
+      // If the agent sent a file and signaled [FILE_SENT], skip the redundant text message
+      const fileSent = result.toolsUsed.includes("telegram_send_file");
+      const isFileSentTag = /^\[FILE_SENT\]$/i.test(finalText);
+      if (fileSent && isFileSentTag) {
+        logger.info("Skipping text response — file already sent with caption", { chatId });
+        return;
+      }
+
       const parts = splitMessage(finalText);
       for (const part of parts) {
         await sendFormattedMessage(ctx.api, chatId, part);

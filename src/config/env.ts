@@ -45,6 +45,7 @@ export const envSchema = z.object({
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   ZAI_API_KEY: z.string().optional(),
   GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().optional(),
   // Agent behavior
   THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high"]).default("off"),
   // STT (optional — only needed for voice/audio transcription)

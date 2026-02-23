@@ -15,7 +15,9 @@ import { createContextTransform } from "./compaction.ts";
 // Pick model based on available API keys
 function resolveDefaultModel() {
   if (env.GEMINI_API_KEY) {
-    return getModel("google", "gemini-3-flash-preview");
+    const modelName = env.GEMINI_MODEL ?? "gemini-3-flash-preview";
+    logger.info("Using Gemini model", { model: modelName });
+    return getModel("google", modelName);
   }
   return getModel("zai", "glm-5");
 }
@@ -167,13 +169,9 @@ export class AgentRunner {
     });
 
     try {
-      // Run agent with timeout to prevent indefinite hangs
+      // Run agent — no timeout, let it work as long as it needs
       logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: this.agent.state.messages.length });
-      const TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("Agent prompt timed out after 10 minutes")), TIMEOUT_MS);
-      });
-      await Promise.race([this.agent.prompt(text, images), timeoutPromise]);
+      await this.agent.prompt(text, images);
       logger.info("Agent prompt completed", { chatId: this.chatId });
 
       // Extract response text from last assistant message
@@ -198,17 +196,6 @@ export class AgentRunner {
       if (this.isContextOverflow(msg)) {
         logger.warn("Context overflow detected, resetting session", { chatId: this.chatId });
         return this.handleContextOverflow(text);
-      }
-
-      // Check for timeout — return a user-friendly response instead of crashing
-      if (msg.includes("timed out")) {
-        logger.warn("Agent prompt timed out", { chatId: this.chatId });
-        // Persist whatever we have so far
-        this.persistSession();
-        return {
-          response: "Sorry, that task took too long and I had to stop. Try breaking it into smaller steps, or ask me to do it differently.",
-          toolsUsed,
-        };
       }
 
       throw err;
