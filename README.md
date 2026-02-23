@@ -1,6 +1,6 @@
 # Rachel9
 
-A personal AI assistant that lives in your Telegram. Powered by [Z.ai](https://z.ai) and built on the [pi-mono](https://github.com/nicholasgriffintn/pi-mono) agent framework.
+A personal AI assistant that lives in your Telegram. Built on the [pi-mono](https://github.com/nicholasgriffintn/pi-mono) agent framework. Supports multiple LLM providers out of the box: Google Gemini, OpenAI, Anthropic, and more via pi-ai.
 
 Rachel can read and create documents, search the web, write and run code, manage your WhatsApp, schedule tasks, remember things about you, and much more — all through a simple Telegram chat.
 
@@ -26,7 +26,7 @@ Rachel can read and create documents, search the web, write and run code, manage
 - [Bun](https://bun.sh) (v1.1+)
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
-- A [Z.ai](https://z.ai) API key
+- An LLM API key (Google AI Studio, OpenAI, Anthropic, or Z.ai)
 
 ### Setup
 
@@ -53,13 +53,17 @@ bun run start
 |---|---|---|---|
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Bot token from @BotFather |
 | `OWNER_TELEGRAM_USER_ID` | Yes | — | Your Telegram user ID |
-| `ZAI_API_KEY` | Yes | — | Z.ai API key |
 | `SHARED_FOLDER_PATH` | Yes | — | Path for persistent data (memory, database, sessions) |
+| `GEMINI_API_KEY` | No* | — | Google AI Studio API key (recommended, enables Gemini Flash) |
+| `ZAI_API_KEY` | No* | — | Z.ai API key (fallback) |
+| `GEMINI_MODEL` | No | `gemini-3-flash-preview` | Override Gemini model name |
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `THINKING_LEVEL` | No | `off` | `off`, `minimal`, `low`, `medium`, `high` |
 | `STT_PROVIDER` | No | `groq` | `groq` or `openai` (for voice messages) |
 | `GROQ_API_KEY` | No | — | Required if using Groq for voice transcription |
+
+\* At least one LLM API key is required (`GEMINI_API_KEY` or `ZAI_API_KEY`).
 
 ## Architecture
 
@@ -96,7 +100,7 @@ docker run -d \
   -v rachel-data:/data \
   -e TELEGRAM_BOT_TOKEN=... \
   -e OWNER_TELEGRAM_USER_ID=... \
-  -e ZAI_API_KEY=... \
+  -e GEMINI_API_KEY=... \
   -e SHARED_FOLDER_PATH=/data \
   rachel9
 ```
