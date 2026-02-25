@@ -6,27 +6,18 @@ import { logger } from "../lib/logger.ts";
 
 /**
  * Estimate token count from messages by character length.
- * Rough heuristic: 1 token ≈ CHARS_PER_TOKEN characters.
+ * Uses JSON.stringify on each message for accurate sizing — this captures
+ * all fields including tool result details, usage metadata, and JSON overhead
+ * that the previous field-by-field approach missed entirely.
  */
 function estimateTokens(messages: AgentMessage[]): number {
   let chars = 0;
   for (const msg of messages) {
-    if ("content" in msg) {
-      if (typeof msg.content === "string") {
-        chars += msg.content.length;
-      } else if (Array.isArray(msg.content)) {
-        for (const part of msg.content) {
-          if ("text" in part && typeof part.text === "string") {
-            chars += part.text.length;
-          } else if ("thinking" in part && typeof part.thinking === "string") {
-            chars += part.thinking.length;
-          } else if ("arguments" in part) {
-            // Tool call — estimate from stringified args
-            chars += JSON.stringify(part.arguments).length;
-          }
-        }
-      }
-    }
+    // Stringify the entire message to capture ALL fields:
+    // - toolResult.details (can be massive — bash output, file contents, etc.)
+    // - assistant metadata (usage, model, provider, api, stopReason)
+    // - JSON structure overhead (keys, quotes, brackets)
+    chars += JSON.stringify(msg).length;
   }
   return Math.ceil(chars / CONSTANTS.CHARS_PER_TOKEN);
 }
@@ -136,63 +127,73 @@ Summary:`;
 }
 
 /**
+ * Standalone compaction function for proactive use (e.g. after loading session from disk).
+ * Returns compacted messages if threshold exceeded, or original messages if not needed.
+ */
+export async function compactMessages(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
+  return doCompact(messages, signal);
+}
+
+/**
  * Create a transformContext callback for the Agent.
  * Auto-compacts context when estimated tokens approach the configured maximum.
  */
 export function createContextTransform(): (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]> {
-  return async (messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> => {
-    const estimated = estimateTokens(messages);
-    const threshold = CONSTANTS.MAX_CONTEXT_TOKENS * CONSTANTS.COMPACTION_THRESHOLD;
+  return doCompact;
+}
 
-    if (estimated <= threshold) {
-      return messages;
-    }
+async function doCompact(messages: AgentMessage[], signal?: AbortSignal): Promise<AgentMessage[]> {
+  const estimated = estimateTokens(messages);
+  const threshold = CONSTANTS.MAX_CONTEXT_TOKENS * CONSTANTS.COMPACTION_THRESHOLD;
 
-    logger.info("Context compaction triggered", {
-      estimatedTokens: estimated,
-      threshold,
-      messageCount: messages.length,
+  if (estimated <= threshold) {
+    return messages;
+  }
+
+  logger.info("Context compaction triggered", {
+    estimatedTokens: estimated,
+    threshold,
+    messageCount: messages.length,
+  });
+
+  // Determine how many messages to keep from the end
+  const keepFromEnd = countTurnPairsFromEnd(messages, CONSTANTS.COMPACTION_KEEP_RECENT_TURNS);
+
+  // Always keep the first 2 messages (typically initial user+assistant exchange)
+  const keepFromStart = Math.min(2, messages.length);
+
+  // If we can't meaningfully split, return as-is
+  if (keepFromStart + keepFromEnd >= messages.length) {
+    logger.warn("Cannot compact — not enough messages to split", {
+      keepFromStart,
+      keepFromEnd,
+      total: messages.length,
     });
+    return messages;
+  }
 
-    // Determine how many messages to keep from the end
-    const keepFromEnd = countTurnPairsFromEnd(messages, CONSTANTS.COMPACTION_KEEP_RECENT_TURNS);
+  const headMessages = messages.slice(0, keepFromStart);
+  const middleMessages = messages.slice(keepFromStart, messages.length - keepFromEnd);
+  const tailMessages = messages.slice(messages.length - keepFromEnd);
 
-    // Always keep the first 2 messages (typically initial user+assistant exchange)
-    const keepFromStart = Math.min(2, messages.length);
+  // Summarize the middle section
+  const summary = await summarizeMessages(middleMessages, signal);
 
-    // If we can't meaningfully split, return as-is
-    if (keepFromStart + keepFromEnd >= messages.length) {
-      logger.warn("Cannot compact — not enough messages to split", {
-        keepFromStart,
-        keepFromEnd,
-        total: messages.length,
-      });
-      return messages;
-    }
-
-    const headMessages = messages.slice(0, keepFromStart);
-    const middleMessages = messages.slice(keepFromStart, messages.length - keepFromEnd);
-    const tailMessages = messages.slice(messages.length - keepFromEnd);
-
-    // Summarize the middle section
-    const summary = await summarizeMessages(middleMessages, signal);
-
-    // Create a synthetic user message with the summary
-    const summaryMessage: AgentMessage = {
-      role: "user" as const,
-      content: `[Context Summary — the following is a summary of our earlier conversation that was compacted to save context space. Your memory files (MEMORY.md, context/, daily-logs/) contain full details.]\n\n${summary}`,
-      timestamp: Date.now(),
-    };
-
-    const compacted = [...headMessages, summaryMessage, ...tailMessages];
-
-    logger.info("Context compacted", {
-      originalMessages: messages.length,
-      compactedMessages: compacted.length,
-      droppedMessages: middleMessages.length,
-      estimatedSavedTokens: estimateTokens(middleMessages) - estimateTokens([summaryMessage]),
-    });
-
-    return compacted;
+  // Create a synthetic user message with the summary
+  const summaryMessage: AgentMessage = {
+    role: "user" as const,
+    content: `[Context Summary — the following is a summary of our earlier conversation that was compacted to save context space. Your memory files (MEMORY.md, context/, daily-logs/) contain full details.]\n\n${summary}`,
+    timestamp: Date.now(),
   };
+
+  const compacted = [...headMessages, summaryMessage, ...tailMessages];
+
+  logger.info("Context compacted", {
+    originalMessages: messages.length,
+    compactedMessages: compacted.length,
+    droppedMessages: middleMessages.length,
+    estimatedSavedTokens: estimateTokens(middleMessages) - estimateTokens([summaryMessage]),
+  });
+
+  return compacted;
 }

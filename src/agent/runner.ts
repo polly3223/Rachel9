@@ -3,14 +3,14 @@ import { getModel } from "@mariozechner/pi-ai";
 import type { AssistantMessage, ImageContent, Message } from "@mariozechner/pi-ai";
 import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
 import { join } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { recordUsage } from "../lib/usage.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
-import { createContextTransform } from "./compaction.ts";
+import { createContextTransform, compactMessages } from "./compaction.ts";
 
 // Pick model based on available API keys
 function resolveDefaultModel() {
@@ -88,6 +88,12 @@ export class AgentRunner {
       this.agent.replaceMessages(loaded.messages);
       this.lastPersistedCount = loaded.messages.length;
       logger.info("Loaded session from disk", { chatId: opts.chatId, messageCount: loaded.messages.length });
+
+      // Proactive compaction: run transformContext on loaded messages immediately.
+      // Without this, compaction only runs when the agent makes an LLM call —
+      // if the context is already too large, the LLM returns empty responses
+      // instead of throwing a clear error, causing "(No response)" silently.
+      this.compactOnLoad(opts.chatId);
     } else {
       logger.info("No previous session found, starting fresh", { chatId: opts.chatId });
     }
@@ -136,6 +142,44 @@ export class AgentRunner {
       cacheRead: usage.cacheRead ?? 0,
       cacheWrite: usage.cacheWrite ?? 0,
       costTotal: usage.cost?.total ?? 0,
+    });
+  }
+
+  /**
+   * Proactive compaction: run after loading session from disk.
+   * If context exceeds threshold, compact immediately and rewrite session file.
+   * Runs async (fire-and-forget) so it doesn't block constructor.
+   */
+  private compactOnLoad(chatId: number): void {
+    const messages = [...this.agent.state.messages];
+    compactMessages(messages).then((compacted) => {
+      if (compacted.length < messages.length) {
+        logger.info("Proactive compaction on load succeeded", {
+          chatId,
+          before: messages.length,
+          after: compacted.length,
+        });
+        this.agent.replaceMessages(compacted);
+
+        // Rewrite session file: delete old, create fresh, write compacted messages
+        const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(chatId));
+        const contextFile = join(sessionDir, "context.jsonl");
+        try {
+          unlinkSync(contextFile);
+        } catch {
+          // File might not exist
+        }
+        this.sessionManager = SessionManager.open(contextFile, sessionDir);
+        for (const msg of compacted) {
+          this.sessionManager.appendMessage(msg as unknown as Message);
+        }
+        this.lastPersistedCount = compacted.length;
+        logger.info("Session file rewritten with compacted context", { chatId });
+      } else {
+        logger.info("Proactive compaction not needed", { chatId, messageCount: messages.length });
+      }
+    }).catch((err) => {
+      logger.warn("Proactive compaction on load failed", { chatId, error: errorMessage(err) });
     });
   }
 
