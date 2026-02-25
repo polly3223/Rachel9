@@ -221,12 +221,24 @@ export class AgentRunner {
       // Extract response text from last assistant message
       const messages = this.agent.state.messages;
       const lastAssistant = [...messages].reverse().find((m: AgentMessage) => m.role === "assistant");
-      const response = lastAssistant
-        ? lastAssistant.content
+
+      let response = "(No response)";
+      if (lastAssistant) {
+        // Check if the model returned an error (e.g. timeout, rate limit)
+        const stopReason = (lastAssistant as Record<string, unknown>).stopReason;
+        const errorMsg = (lastAssistant as Record<string, unknown>).errorMessage;
+
+        if (stopReason === "error" && errorMsg) {
+          logger.warn("Agent response ended with error", { chatId: this.chatId, error: String(errorMsg) });
+          response = `Sorry, the AI model returned an error: ${String(errorMsg)}\nPlease try again.`;
+        } else {
+          const textParts = lastAssistant.content
             .filter((c): c is { type: "text"; text: string } => c.type === "text")
             .map((c) => c.text)
-            .join("\n")
-        : "(No response)";
+            .join("\n");
+          response = textParts || "(No response)";
+        }
+      }
 
       // Persist session
       this.persistSession();
