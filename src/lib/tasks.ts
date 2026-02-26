@@ -24,6 +24,7 @@ export interface TaskRow {
 
 let telegramSender: ((text: string) => Promise<void>) | null = null;
 let agentExecutor: ((prompt: string) => Promise<string>) | null = null;
+let agentBusy = false;
 
 export function setTelegramSender(sender: (text: string) => Promise<void>): void {
   telegramSender = sender;
@@ -31,6 +32,11 @@ export function setTelegramSender(sender: (text: string) => Promise<void>): void
 
 export function setAgentExecutor(executor: (prompt: string) => Promise<string>): void {
   agentExecutor = executor;
+}
+
+/** Signal that the agent is busy (called by message handler). */
+export function setAgentBusy(busy: boolean): void {
+  agentBusy = busy;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +156,15 @@ async function executeTask(task: TaskRow): Promise<void> {
         logger.warn("No agent executor registered for agent task");
         break;
       }
+      if (agentBusy) {
+        // Agent is already processing another task or user message.
+        // Defer this task by 2 minutes so the poller retries later.
+        const retryAt = Date.now() + 120_000;
+        db.run("UPDATE tasks SET next_run = ? WHERE id = ?", [retryAt, task.id]);
+        logger.info("Agent busy, deferring task", { name: task.name, retryAt: new Date(retryAt).toISOString() });
+        break;
+      }
+      agentBusy = true;
       try {
         const result = await agentExecutor(prompt);
         if (telegramSender && result) {
@@ -162,6 +177,8 @@ async function executeTask(task: TaskRow): Promise<void> {
         if (telegramSender) {
           await telegramSender(`⚠️ Agent task "${task.name}" failed: ${errorMessage(err)}`);
         }
+      } finally {
+        agentBusy = false;
       }
       break;
     }

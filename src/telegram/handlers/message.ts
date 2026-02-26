@@ -1,6 +1,7 @@
 import type { Api } from "grammy";
 import type { BotContext } from "../bot.ts";
 import { agentPrompt } from "../../agent/index.ts";
+import { setAgentBusy } from "../../lib/tasks.ts";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { timestamp } from "../lib/timestamp.ts";
 import { sendFormattedMessage, splitMessage } from "../lib/format.ts";
@@ -118,7 +119,9 @@ export async function processAgentPrompt(
     try {
       void appendToDailyLog("user", logText ?? prompt);
 
+      setAgentBusy(true);
       const result = await agentPrompt(chatId, prompt, images);
+      setAgentBusy(false);
 
       stopTyping();
 
@@ -139,6 +142,7 @@ export async function processAgentPrompt(
         await sendFormattedMessage(ctx.api, chatId, part);
       }
     } catch (err) {
+      setAgentBusy(false);
       stopTyping();
 
       logger.error("Message handler error", { chatId, error: errorMessage(err) });
