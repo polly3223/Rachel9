@@ -14,8 +14,8 @@ export const CONSTANTS = {
   CHARS_PER_TOKEN: 4,
 
   // ── Streaming / Telegram ────────────────────────────────────────────
-  /** Minimum ms between Telegram message edits during streaming. */
-  STREAM_THROTTLE_MS: 500,
+  /** Minimum ms between Telegram draft updates during streaming. */
+  STREAM_THROTTLE_MS: 300,
   /** Telegram single-message character limit. */
   TELEGRAM_MAX_MESSAGE_LENGTH: 4096,
   /** Truncation point for streaming edits (leave room for suffix). */

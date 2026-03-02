@@ -10,23 +10,22 @@ import { CONSTANTS } from "../../config/constants.ts";
  * Falls back gracefully — if sendMessageDraft fails (e.g. group chat),
  * it just stops sending drafts (the typing indicator is still running).
  *
- * Usage:
- *   const drafter = new DraftStream(api, chatId);
- *   const unsub = agent.subscribe(drafter.handleEvent);
- *   // ... agent runs ...
- *   unsub();
- *   drafter.stop();
+ * Throttled to ~100ms to avoid Telegram 429 rate limits.
+ * Only streams actual LLM text — no tool status messages (they look bad
+ * if they get "stuck" as the last visible draft).
  */
 export class DraftStream {
   private api: Api;
   private chatId: number;
   private draftId: number;
   private buffer = "";
-  private lastSentLength = 0;
+  private stopped = false;
+  private failed = false;
+  private draftsSent = 0;
+  private deltaCount = 0;
+  private totalDeltaChars = 0;
   private lastSendTime = 0;
   private pendingSend: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-  private failed = false; // If sendMessageDraft fails, stop trying
 
   constructor(api: Api, chatId: number) {
     this.api = api;
@@ -42,80 +41,66 @@ export class DraftStream {
   handleEvent = (event: AgentEvent): void => {
     if (this.stopped || this.failed) return;
 
-    switch (event.type) {
-      case "message_update": {
-        const ame = event.assistantMessageEvent;
-        if (ame.type === "text_delta") {
-          this.buffer += ame.delta;
-          this.scheduleFlush();
+    if (event.type === "message_update") {
+      const ame = event.assistantMessageEvent;
+      if (ame.type === "text_delta" && ame.delta.length > 0) {
+        if (this.buffer.length === 0) {
+          logger.info("Draft stream: first text_delta", {
+            chatId: this.chatId,
+            deltaLen: ame.delta.length,
+            delta: ame.delta.slice(0, 50),
+          });
         }
-        break;
-      }
-      case "tool_execution_start": {
-        // During tool execution, show a status line
-        const toolLabel = formatToolName(event.toolName);
-        this.sendDraft(`${this.buffer}\n\n_${toolLabel}..._`.trimStart());
-        break;
-      }
-      case "tool_execution_end": {
-        break;
-      }
-      case "message_start": {
-        // New message — if there was tool execution text, the LLM is now
-        // generating the next text chunk. Buffer continues accumulating.
-        break;
+        this.deltaCount++;
+        this.totalDeltaChars += ame.delta.length;
+        this.buffer += ame.delta;
+        this.scheduleFlush();
       }
     }
   };
 
   /**
-   * Schedule a throttled flush of the buffer to Telegram.
+   * Schedule a flush with minimal throttle to avoid 429s.
    */
   private scheduleFlush(): void {
-    if (this.pendingSend) return; // Already scheduled
+    if (this.pendingSend) return;
 
     const elapsed = Date.now() - this.lastSendTime;
-    const delay = Math.max(0, CONSTANTS.STREAM_THROTTLE_MS - elapsed);
+    const MIN_INTERVAL = 100; // ms — enough to avoid 429
+    const delay = Math.max(0, MIN_INTERVAL - elapsed);
 
-    this.pendingSend = setTimeout(() => {
-      this.pendingSend = null;
+    if (delay === 0) {
       this.flush();
-    }, delay);
+    } else {
+      this.pendingSend = setTimeout(() => {
+        this.pendingSend = null;
+        this.flush();
+      }, delay);
+    }
   }
 
   /**
-   * Send the current buffer as a draft message.
+   * Send the current buffer as a draft.
    */
   private flush(): void {
     if (this.stopped || this.failed) return;
 
     const text = this.buffer.trim();
-    if (!text || text.length === this.lastSentLength) return;
-    // Telegram requires at least some content, and drafts < 30 chars
-    // won't show the bubble — but we send anyway so it's ready when it crosses 30
-    this.sendDraft(text);
-  }
-
-  /**
-   * Actually call sendMessageDraft. If it fails, set failed=true and stop.
-   */
-  private sendDraft(text: string): void {
-    if (this.stopped || this.failed) return;
+    if (!text) return;
 
     // Truncate to Telegram's limit
     const truncated = text.length > CONSTANTS.STREAM_EDIT_TRUNCATE
       ? text.slice(0, CONSTANTS.STREAM_EDIT_TRUNCATE) + "..."
       : text;
 
-    this.lastSentLength = truncated.length;
+    this.draftsSent++;
     this.lastSendTime = Date.now();
 
-    // Fire and forget — don't await
+    // Fire and forget
     this.api.sendMessageDraft(this.chatId, this.draftId, truncated).catch((err: unknown) => {
       const msg = err instanceof Error ? err.message : String(err);
-      // Expected failures: groups, channels, old clients
       if (!this.failed) {
-        logger.debug("sendMessageDraft failed, disabling for this response", {
+        logger.info("sendMessageDraft failed, disabling", {
           chatId: this.chatId,
           error: msg,
         });
@@ -126,7 +111,6 @@ export class DraftStream {
 
   /**
    * Stop the drafter. Call this when the agent is done.
-   * Sends an empty draft to clear the bubble (Telegram will show the final message instead).
    */
   stop(): void {
     this.stopped = true;
@@ -134,32 +118,18 @@ export class DraftStream {
       clearTimeout(this.pendingSend);
       this.pendingSend = null;
     }
+    const avgDelta = this.deltaCount > 0 ? Math.round(this.totalDeltaChars / this.deltaCount) : 0;
+    logger.info("Draft stream stopped", {
+      chatId: this.chatId,
+      draftsSent: this.draftsSent,
+      deltaEvents: this.deltaCount,
+      avgDeltaChars: avgDelta,
+      totalChars: this.totalDeltaChars,
+      failed: this.failed,
+    });
   }
 
-  /**
-   * Whether drafting is available (hasn't failed).
-   */
   get isActive(): boolean {
     return !this.failed && !this.stopped;
   }
-}
-
-/**
- * Format a tool name for display in the draft bubble.
- */
-function formatToolName(name: string): string {
-  // Convert snake_case to readable: "web_search" → "Searching the web"
-  const map: Record<string, string> = {
-    bash: "Running command",
-    read_file: "Reading file",
-    write_file: "Writing file",
-    edit_file: "Editing file",
-    web_search: "Searching the web",
-    web_fetch: "Fetching webpage",
-    glob_files: "Finding files",
-    grep_search: "Searching code",
-    telegram_send_file: "Sending file",
-    list_directory: "Listing directory",
-  };
-  return map[name] ?? `Using ${name.replace(/_/g, " ")}`;
 }
