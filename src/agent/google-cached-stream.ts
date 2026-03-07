@@ -56,6 +56,16 @@ interface PreparedRequest {
   suffixMessages: Message[];
 }
 
+interface CachedRequestConfig {
+  systemInstruction?: string;
+  tools?: ReturnType<typeof convertTools>;
+  toolConfig?: {
+    functionCallingConfig: {
+      mode: ReturnType<typeof mapToolChoice>;
+    };
+  };
+}
+
 function isGoogleGenerativeAiModel(model: Model<any>): model is GoogleModel {
   return model.provider === "google" && model.api === "google-generative-ai";
 }
@@ -117,7 +127,7 @@ class GeminiChatCache {
     }
   }
 
-  async prepareRequest(model: GoogleModel, context: Context): Promise<PreparedRequest> {
+  async prepareRequest(model: GoogleModel, context: Context, options: GoogleOptions = {}): Promise<PreparedRequest> {
     const metadata = this.load();
     if (!metadata) {
       return {
@@ -141,7 +151,7 @@ class GeminiChatCache {
     }
 
     const prefixMessages = context.messages.slice(0, metadata.prefixMessageCount);
-    const fingerprint = this.fingerprint(model, prefixMessages);
+    const fingerprint = this.fingerprint(model, prefixMessages, context.systemPrompt, context.tools, options.toolChoice);
     if (fingerprint !== metadata.fingerprint) {
       return {
         prefixMessageCount: 0,
@@ -161,6 +171,7 @@ class GeminiChatCache {
     model: GoogleModel,
     context: Context,
     assistantMessage: AssistantMessage,
+    options: GoogleOptions = {},
   ): Promise<void> {
     const inputTokens = assistantMessage.usage.input ?? 0;
     if (inputTokens < MIN_CACHEABLE_INPUT_TOKENS) return;
@@ -174,12 +185,16 @@ class GeminiChatCache {
     const previous = this.load();
 
     try {
+      const cachedRequestConfig = buildCachedRequestConfig(context.systemPrompt, context.tools, options);
       const created = await client.caches.create({
         model: model.id,
         config: {
           contents,
           ttl: CACHE_TTL,
           displayName: `rachel9-chat-${this.chatId}`,
+          ...(cachedRequestConfig.systemInstruction && { systemInstruction: cachedRequestConfig.systemInstruction }),
+          ...(cachedRequestConfig.tools && { tools: cachedRequestConfig.tools }),
+          ...(cachedRequestConfig.toolConfig && { toolConfig: cachedRequestConfig.toolConfig }),
         },
       });
       if (!created.name) return;
@@ -187,7 +202,7 @@ class GeminiChatCache {
       const next: CacheMetadata = {
         version: CACHE_METADATA_VERSION,
         name: created.name,
-        fingerprint: this.fingerprint(model, prefixMessages),
+        fingerprint: this.fingerprint(model, prefixMessages, context.systemPrompt, context.tools, options.toolChoice),
         model: model.id,
         prefixMessageCount: prefixMessages.length,
         updatedAt: Date.now(),
@@ -218,9 +233,49 @@ class GeminiChatCache {
     }
   }
 
-  private fingerprint(model: GoogleModel, messages: Message[]): string {
-    return sha256(JSON.stringify({ model: model.id, messages }));
+  private fingerprint(
+    model: GoogleModel,
+    messages: Message[],
+    systemPrompt?: string,
+    tools?: Context["tools"],
+    toolChoice?: GoogleOptions["toolChoice"],
+  ): string {
+    return sha256(
+      JSON.stringify({
+        model: model.id,
+        systemPrompt,
+        tools,
+        toolChoice,
+        messages,
+      }),
+    );
   }
+}
+
+function buildCachedRequestConfig(
+  systemPrompt: string | undefined,
+  tools: Context["tools"],
+  options: GoogleOptions = {},
+): CachedRequestConfig {
+  const config: CachedRequestConfig = {};
+
+  if (systemPrompt) {
+    config.systemInstruction = sanitizeSurrogates(systemPrompt);
+  }
+
+  if (tools && tools.length > 0) {
+    config.tools = convertTools(tools);
+  }
+
+  if (tools && tools.length > 0 && options.toolChoice) {
+    config.toolConfig = {
+      functionCallingConfig: {
+        mode: mapToolChoice(options.toolChoice),
+      },
+    };
+  }
+
+  return config;
 }
 
 function buildParams(
@@ -244,12 +299,12 @@ function buildParams(
 
   const config: Record<string, unknown> = {
     ...(Object.keys(generationConfig).length > 0 && generationConfig),
-    ...(systemPrompt && { systemInstruction: sanitizeSurrogates(systemPrompt) }),
-    ...(tools && tools.length > 0 && { tools: convertTools(tools) }),
+    ...(!cachedContentName && systemPrompt && { systemInstruction: sanitizeSurrogates(systemPrompt) }),
+    ...(!cachedContentName && tools && tools.length > 0 && { tools: convertTools(tools) }),
     ...(cachedContentName && { cachedContent: cachedContentName }),
   };
 
-  if (tools && tools.length > 0 && options.toolChoice) {
+  if (!cachedContentName && tools && tools.length > 0 && options.toolChoice) {
     config["toolConfig"] = {
       functionCallingConfig: {
         mode: mapToolChoice(options.toolChoice),
@@ -368,7 +423,7 @@ function streamGoogleWithCache(chatId: number, model: GoogleModel, context: Cont
 
       const cache = new GeminiChatCache(chatId);
       const client = createClient(model, apiKey, options.headers);
-      let prepared = await cache.prepareRequest(model, context);
+      let prepared = await cache.prepareRequest(model, context, options);
       let params = buildParams(
         model,
         context.systemPrompt,
@@ -563,7 +618,7 @@ function streamGoogleWithCache(chatId: number, model: GoogleModel, context: Cont
         throw new Error("An unknown error occurred");
       }
 
-      await cache.refresh(client, model, context, output);
+      await cache.refresh(client, model, context, output, options);
 
       stream.push({ type: "done", reason: output.stopReason, message: output });
       stream.end();
