@@ -1,5 +1,6 @@
 import { Agent, type AgentEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
+import { MODELS } from "@mariozechner/pi-ai/dist/models.generated.js";
 import type { AssistantMessage, ImageContent, Message } from "@mariozechner/pi-ai";
 import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
 import { join } from "node:path";
@@ -16,8 +17,11 @@ import { createContextTransform, compactMessages } from "./compaction.ts";
 function resolveDefaultModel() {
   if (env.GEMINI_API_KEY) {
     const modelName = env.GEMINI_MODEL ?? "gemini-3-flash-preview";
+    if (!(modelName in MODELS.google)) {
+      throw new Error(`Unsupported Gemini model: ${modelName}`);
+    }
     logger.info("Using Gemini model", { model: modelName });
-    return getModel("google", modelName as any);
+    return getModel("google", modelName as keyof typeof MODELS.google);
   }
   return getModel("zai", "glm-5");
 }
