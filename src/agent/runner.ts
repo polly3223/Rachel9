@@ -17,7 +17,7 @@ function resolveDefaultModel() {
   if (env.GEMINI_API_KEY) {
     const modelName = env.GEMINI_MODEL ?? "gemini-3-flash-preview";
     logger.info("Using Gemini model", { model: modelName });
-    return getModel("google", modelName);
+    return getModel("google", modelName as any);
   }
   return getModel("zai", "glm-5");
 }
@@ -202,6 +202,7 @@ export class AgentRunner {
   async prompt(text: string, images?: ImageContent[]): Promise<PromptResult> {
     // Refresh system prompt (memory might have changed)
     this.agent.setSystemPrompt(buildSystemPrompt());
+    const promptText = this.prependMessageTimestamp(text);
 
     const toolsUsed: string[] = [];
 
@@ -215,7 +216,7 @@ export class AgentRunner {
     try {
       // Run agent — no timeout, let it work as long as it needs
       logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: this.agent.state.messages.length });
-      await this.agent.prompt(text, images);
+      await this.agent.prompt(promptText, images);
       logger.info("Agent prompt completed", { chatId: this.chatId });
 
       // Extract response text from last assistant message
@@ -225,8 +226,9 @@ export class AgentRunner {
       let response = "(No response)";
       if (lastAssistant) {
         // Check if the model returned an error (e.g. timeout, rate limit)
-        const stopReason = (lastAssistant as Record<string, unknown>).stopReason;
-        const errorMsg = (lastAssistant as Record<string, unknown>).errorMessage;
+        const assistantRecord = lastAssistant as unknown as Record<string, unknown>;
+        const stopReason = assistantRecord["stopReason"];
+        const errorMsg = assistantRecord["errorMessage"];
 
         if (stopReason === "error" && errorMsg) {
           logger.warn("Agent response ended with error", { chatId: this.chatId, error: String(errorMsg) });
@@ -288,7 +290,7 @@ export class AgentRunner {
     const contextFile = join(sessionDir, "context.jsonl");
     this.sessionManager = SessionManager.open(contextFile, sessionDir);
 
-    const recoveryMessage = `[System: Previous conversation context was too large and has been reset. Your memory files (MEMORY.md, context/, daily-logs/) are intact. The user's original message follows.]\n\n${originalText}`;
+    const recoveryMessage = `[System: Previous conversation context was too large and has been reset. Your memory files (MEMORY.md, context/, daily-logs/) are intact. The user's original message follows.]\n\n${this.prependMessageTimestamp(originalText)}`;
 
     try {
       await this.agent.prompt(recoveryMessage);
@@ -354,5 +356,21 @@ export class AgentRunner {
    */
   get isStreaming(): boolean {
     return this.agent.state.isStreaming;
+  }
+
+  private prependMessageTimestamp(text: string): string {
+    const now = new Date();
+    const cet = now.toLocaleString("en-GB", {
+      timeZone: "Europe/Berlin",
+      dateStyle: "full",
+      timeStyle: "medium",
+    });
+    const utc = now.toLocaleString("en-GB", {
+      timeZone: "UTC",
+      dateStyle: "full",
+      timeStyle: "medium",
+    });
+
+    return `[Message timestamp: ${cet} CET (${utc} UTC)]\n\n${text}`;
   }
 }
