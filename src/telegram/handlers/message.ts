@@ -1,11 +1,10 @@
 import type { Api } from "grammy";
 import type { BotContext } from "../bot.ts";
-import { agentPrompt, subscribeToAgent } from "../../agent/index.ts";
+import { agentPrompt } from "../../agent/index.ts";
 import { setAgentBusy } from "../../lib/tasks.ts";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { timestamp } from "../lib/timestamp.ts";
 import { sendFormattedMessage, splitMessage } from "../lib/format.ts";
-import { DraftStream } from "../lib/draft-stream.ts";
 import { enqueueForChat } from "../lib/queue.ts";
 import { logger } from "../../lib/logger.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -104,10 +103,9 @@ export async function handleTextMessage(ctx: BotContext): Promise<void> {
  *
  * Flow:
  * 1. Start typing indicator loop
- * 2. Start DraftStream to show live text as it generates (Bot API 9.5+)
- * 3. Run agent (wait for full response)
- * 4. Stop draft stream + typing
- * 5. Send final response as new message(s)
+ * 2. Run agent (wait for full response)
+ * 3. Stop typing
+ * 4. Send final response as new message(s)
  */
 export async function processAgentPrompt(
   ctx: BotContext,
@@ -119,10 +117,6 @@ export async function processAgentPrompt(
   await enqueueForChat(chatId, async () => {
     const stopTyping = startTypingLoop(ctx.api, chatId);
 
-    // Set up draft streaming — shows live text in Telegram as agent generates
-    const drafter = new DraftStream(ctx.api, chatId);
-    const unsubDraft = subscribeToAgent(chatId, drafter.handleEvent);
-
     try {
       void appendToDailyLog("user", logText ?? prompt);
 
@@ -130,9 +124,6 @@ export async function processAgentPrompt(
       const result = await agentPrompt(chatId, prompt, images);
       setAgentBusy(false);
 
-      // Stop streaming UI
-      drafter.stop();
-      unsubDraft();
       stopTyping();
 
       // Send final response as new message(s)
@@ -153,8 +144,6 @@ export async function processAgentPrompt(
       }
     } catch (err) {
       setAgentBusy(false);
-      drafter.stop();
-      unsubDraft();
       stopTyping();
 
       logger.error("Message handler error", { chatId, error: errorMessage(err) });
