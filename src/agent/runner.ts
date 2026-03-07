@@ -11,13 +11,14 @@ import { recordUsage } from "../lib/usage.ts";
 import { buildSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform, compactMessages } from "./compaction.ts";
+import { createGeminiCachedStreamFn } from "./google-cached-stream.ts";
 
 // Pick model based on available API keys
 function resolveDefaultModel() {
   if (env.GEMINI_API_KEY) {
     const modelName = env.GEMINI_MODEL ?? "gemini-3-flash-preview";
     logger.info("Using Gemini model", { model: modelName });
-    return getModel("google", modelName);
+    return getModel("google", modelName as any);
   }
   return getModel("zai", "glm-5");
 }
@@ -70,6 +71,8 @@ export class AgentRunner {
         thinkingLevel,
         tools,
       },
+      sessionId: `chat-${opts.chatId}`,
+      streamFn: createGeminiCachedStreamFn(opts.chatId),
       convertToLlm,
       transformContext: createContextTransform(),
       getApiKey: async (provider: string) => {
@@ -225,8 +228,9 @@ export class AgentRunner {
       let response = "(No response)";
       if (lastAssistant) {
         // Check if the model returned an error (e.g. timeout, rate limit)
-        const stopReason = (lastAssistant as Record<string, unknown>).stopReason;
-        const errorMsg = (lastAssistant as Record<string, unknown>).errorMessage;
+        const assistantRecord = lastAssistant as unknown as Record<string, unknown>;
+        const stopReason = assistantRecord["stopReason"];
+        const errorMsg = assistantRecord["errorMessage"];
 
         if (stopReason === "error" && errorMsg) {
           logger.warn("Agent response ended with error", { chatId: this.chatId, error: String(errorMsg) });
