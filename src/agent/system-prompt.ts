@@ -6,7 +6,7 @@ import { buildSkillPromptSection } from "../lib/skills.ts";
 
 /**
  * Base system prompt for Rachel.
- * Memory content is appended dynamically before each query.
+ * Keep this stable so provider-side implicit caching has a chance to work.
  */
 const BASE_PROMPT = `You are Rachel, a personal AI assistant. You are helpful, concise, and friendly.
 
@@ -205,25 +205,29 @@ function loadCoreMemory(): string {
   }
 }
 
+export function buildStaticSystemPrompt(): string {
+  return BASE_PROMPT;
+}
+
 /**
- * Build the complete system prompt with memory injection.
- * Called before every agent query to ensure fresh memory.
+ * Build dynamic context that can change between turns without invalidating
+ * the whole system prompt prefix.
  */
-export function buildSystemPrompt(): string {
-  let prompt = BASE_PROMPT;
+export function buildDynamicPromptContext(): string {
+  const sections: string[] = [];
 
   // Inject skills list
   const skillsDir = join(process.cwd(), "skills");
   const skillSection = buildSkillPromptSection(skillsDir);
   if (skillSection) {
-    prompt += skillSection;
+    sections.push(skillSection.trim());
   }
 
   // Inject core memory
   const coreMemory = loadCoreMemory();
   if (coreMemory) {
-    prompt += `\n\n## Your Memory\n${coreMemory}`;
+    sections.push(`## Your Memory\n${coreMemory}`);
   }
 
-  return prompt;
+  return sections.join("\n\n");
 }

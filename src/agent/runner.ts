@@ -9,7 +9,7 @@ import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { recordUsage } from "../lib/usage.ts";
-import { buildSystemPrompt } from "./system-prompt.ts";
+import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform, compactMessages } from "./compaction.ts";
 
@@ -69,7 +69,7 @@ export class AgentRunner {
     // Create agent with context compaction
     this.agent = new Agent({
       initialState: {
-        systemPrompt: buildSystemPrompt(),
+        systemPrompt: buildStaticSystemPrompt(),
         model: DEFAULT_MODEL,
         thinkingLevel,
         tools,
@@ -85,6 +85,7 @@ export class AgentRunner {
         return undefined;
       },
     });
+    this.agent.sessionId = `chat-${opts.chatId}`;
 
     // Load existing session messages
     const loaded = this.sessionManager.buildSessionContext();
@@ -204,8 +205,6 @@ export class AgentRunner {
    * Handles session persistence, system prompt refresh, and error recovery.
    */
   async prompt(text: string, images?: ImageContent[]): Promise<PromptResult> {
-    // Refresh system prompt (memory might have changed)
-    this.agent.setSystemPrompt(buildSystemPrompt());
     const promptText = this.prependMessageTimestamp(text);
 
     const toolsUsed: string[] = [];
@@ -364,6 +363,7 @@ export class AgentRunner {
 
   private prependMessageTimestamp(text: string): string {
     const now = new Date();
+    const dynamicContext = buildDynamicPromptContext();
     const cet = now.toLocaleString("en-GB", {
       timeZone: "Europe/Berlin",
       dateStyle: "full",
@@ -375,6 +375,11 @@ export class AgentRunner {
       timeStyle: "medium",
     });
 
-    return `[Message timestamp: ${cet} CET (${utc} UTC)]\n\n${text}`;
+    const sections = [`[Message timestamp: ${cet} CET (${utc} UTC)]`];
+    if (dynamicContext) {
+      sections.push(`[Dynamic context for this message]\n${dynamicContext}`);
+    }
+    sections.push(text);
+    return sections.join("\n\n");
   }
 }
