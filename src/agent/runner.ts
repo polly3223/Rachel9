@@ -151,6 +151,27 @@ export class AgentRunner {
   }
 
   /**
+   * Rewrite the entire session file from current in-memory messages.
+   * Used after compaction (both on-load and mid-prompt) to keep disk in sync.
+   */
+  private rewriteSession(): void {
+    const messages = this.agent.state.messages;
+    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(this.chatId));
+    const contextFile = join(sessionDir, "context.jsonl");
+    try {
+      unlinkSync(contextFile);
+    } catch {
+      // File might not exist
+    }
+    this.sessionManager = SessionManager.open(contextFile, sessionDir);
+    for (const msg of messages) {
+      this.sessionManager.appendMessage(msg as unknown as Message);
+    }
+    this.lastPersistedCount = messages.length;
+    logger.info("Session file rewritten", { chatId: this.chatId, messageCount: messages.length });
+  }
+
+  /**
    * Proactive compaction: run after loading session from disk.
    * If context exceeds threshold, compact immediately and rewrite session file.
    * Runs async (fire-and-forget) so it doesn't block constructor.
@@ -165,21 +186,7 @@ export class AgentRunner {
           after: compacted.length,
         });
         this.agent.replaceMessages(compacted);
-
-        // Rewrite session file: delete old, create fresh, write compacted messages
-        const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(chatId));
-        const contextFile = join(sessionDir, "context.jsonl");
-        try {
-          unlinkSync(contextFile);
-        } catch {
-          // File might not exist
-        }
-        this.sessionManager = SessionManager.open(contextFile, sessionDir);
-        for (const msg of compacted) {
-          this.sessionManager.appendMessage(msg as unknown as Message);
-        }
-        this.lastPersistedCount = compacted.length;
-        logger.info("Session file rewritten with compacted context", { chatId });
+        this.rewriteSession();
       } else {
         logger.info("Proactive compaction not needed", { chatId, messageCount: messages.length });
       }
@@ -218,9 +225,23 @@ export class AgentRunner {
 
     try {
       // Run agent — no timeout, let it work as long as it needs
-      logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: this.agent.state.messages.length });
+      const messageCountBefore = this.agent.state.messages.length;
+      logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: messageCountBefore });
       await this.agent.prompt(promptText, images);
       logger.info("Agent prompt completed", { chatId: this.chatId });
+
+      // Detect if transformContext compacted during the LLM call.
+      // If message count dropped, the in-memory messages were replaced by a
+      // compacted version — we must rewrite the session file to stay in sync.
+      const messageCountAfter = this.agent.state.messages.length;
+      if (messageCountAfter < messageCountBefore) {
+        logger.info("Mid-prompt compaction detected, rewriting session file", {
+          chatId: this.chatId,
+          before: messageCountBefore,
+          after: messageCountAfter,
+        });
+        this.rewriteSession();
+      }
 
       // Extract response text from last assistant message
       const messages = this.agent.state.messages;
