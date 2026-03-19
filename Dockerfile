@@ -37,6 +37,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 # Non-root user (UID 1001 matches Rachel Cloud orchestrator expectations)
 RUN groupadd -g 1001 rachel && useradd -m -u 1001 -g rachel rachel
 
+# Give rachel passwordless sudo so she can install packages at runtime
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+    && echo "rachel ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY --from=builder --chown=rachel:rachel /app /app
 
