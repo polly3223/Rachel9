@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,17 @@ function loadEnv(): Env {
 }
 
 export const env: Env = loadEnv();
+
+// ---------------------------------------------------------------------------
+// Use the persistent shared volume for temporary files. In Docker containers
+// `/tmp` is a 100MB tmpfs, which can cause ENOSPC when the bash tool spills
+// large command output to temp logs. Point TMPDIR/TMP/TEMP at `/data` instead.
+// ---------------------------------------------------------------------------
+const TEMP_DIR = join(env.SHARED_FOLDER_PATH, "rachel9", "tmp");
+mkdirSync(TEMP_DIR, { recursive: true });
+process.env["TMPDIR"] = TEMP_DIR;
+process.env["TMP"] = TEMP_DIR;
+process.env["TEMP"] = TEMP_DIR;
 
 // ---------------------------------------------------------------------------
 // Security: Remove sensitive env vars from process.env so the agent's bash

@@ -28,6 +28,7 @@ logger.info("Rachel9 starting...", { env: env.NODE_ENV });
 logger.info("Configuration loaded", {
   sharedFolder: env.SHARED_FOLDER_PATH,
   logLevel: env.LOG_LEVEL,
+  tempDir: process.env["TMPDIR"],
 });
 
 // ---------------------------------------------------------------------------
