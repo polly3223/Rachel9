@@ -31,6 +31,17 @@ export interface AgentQueueRecord {
   error: string | null;
 }
 
+export interface AgentRunEventRecord {
+  id: number;
+  runId: string;
+  chatId: number;
+  type: string;
+  message: string | null;
+  toolName: string | null;
+  data: Record<string, unknown>;
+  createdAt: number;
+}
+
 function now(): number {
   return Date.now();
 }
@@ -80,6 +91,19 @@ function mapQueue(row: Record<string, unknown>): AgentQueueRecord {
     startedAt: row["started_at"] === null ? null : Number(row["started_at"]),
     completedAt: row["completed_at"] === null ? null : Number(row["completed_at"]),
     error: row["error"] === null ? null : String(row["error"]),
+  };
+}
+
+function mapRunEvent(row: Record<string, unknown>): AgentRunEventRecord {
+  return {
+    id: Number(row["id"]),
+    runId: String(row["run_id"]),
+    chatId: Number(row["chat_id"]),
+    type: String(row["type"]),
+    message: row["message"] === null ? null : String(row["message"]),
+    toolName: row["tool_name"] === null ? null : String(row["tool_name"]),
+    data: parseMetadata(row["data"] === null ? null : String(row["data"])),
+    createdAt: Number(row["created_at"]),
   };
 }
 
@@ -240,6 +264,17 @@ export function getLatestRun(chatId: number): AgentRunRecord | null {
     LIMIT 1
   `).get(chatId) as Record<string, unknown> | null;
   return row ? mapRun(row) : null;
+}
+
+export function getRunEvents(runId: string, limit = 20): AgentRunEventRecord[] {
+  const safeLimit = Math.max(1, Math.min(limit, 100));
+  const rows = db.query(`
+    SELECT * FROM agent_events
+    WHERE run_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
+  `).all(runId, safeLimit) as Array<Record<string, unknown>>;
+  return rows.map(mapRunEvent).reverse();
 }
 
 export function enqueueTurn(chatId: number, textLength: number): string {

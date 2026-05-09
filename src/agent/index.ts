@@ -2,7 +2,7 @@ import { AgentRunner, type PromptResult, type AgentEventCallback } from "./runne
 import type { ToolDependencies } from "./tools/index.ts";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { logger } from "../lib/logger.ts";
-import { getLatestRun } from "../lib/agent-runtime-store.ts";
+import { getLatestRun, getRunEvents } from "../lib/agent-runtime-store.ts";
 
 /**
  * Cache of active agent runners, keyed by chatId.
@@ -79,10 +79,13 @@ export function abortAgent(chatId: number, reason = "Stopped by user"): boolean 
 export function getAgentStatus(chatId: number): {
   runner: { model: string; messages: number; streaming: boolean } | null;
   latestRun: ReturnType<typeof getLatestRun>;
+  recentEvents: ReturnType<typeof getRunEvents>;
 } {
+  const latestRun = getLatestRun(chatId);
   return {
     runner: getRunnerInfo(chatId),
-    latestRun: getLatestRun(chatId),
+    latestRun,
+    recentEvents: latestRun ? getRunEvents(latestRun.id, 12) : [],
   };
 }
 

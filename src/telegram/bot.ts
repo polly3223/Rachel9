@@ -52,6 +52,15 @@ bot.command("status", async (ctx) => {
     if (run.error) lines.push(`Error: ${run.error}`);
   }
 
+  if (status.recentEvents.length > 0) {
+    lines.push("Recent events:");
+    for (const event of status.recentEvents.slice(-5)) {
+      const ageSeconds = Math.round((Date.now() - event.createdAt) / 1000);
+      const tool = event.toolName ? ` (${event.toolName})` : "";
+      lines.push(`- ${event.type}${tool}, ${ageSeconds}s ago`);
+    }
+  }
+
   const queued = health.queue.filter((item) => item.chatId === chatId);
   if (queued.length > 0) {
     lines.push(`Queue: ${queued.map((item) => item.status).join(", ")}`);
