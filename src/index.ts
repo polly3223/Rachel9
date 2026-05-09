@@ -5,10 +5,11 @@ import { env } from "./config/env.ts";
 import { logger } from "./lib/logger.ts";
 import { db } from "./lib/database.ts";
 import { errorMessage } from "./lib/errors.ts";
-import { initAgentSystem, agentPrompt } from "./agent/index.ts";
+import { abortAgent, agentPrompt, getAgentStatus, initAgentSystem } from "./agent/index.ts";
 import { initializeMemorySystem } from "./lib/memory.ts";
 import { setTelegramSender, setAgentExecutor, startTaskPoller, shutdownTasks } from "./lib/tasks.ts";
 import { getRuntimeHealth } from "./lib/runtime-state.ts";
+import { recoverAbandonedRuntimeState } from "./lib/agent-runtime-store.ts";
 
 // ---------------------------------------------------------------------------
 // SAFETY GUARD: Prevent polling mode inside Docker containers.
@@ -31,6 +32,11 @@ logger.info("Configuration loaded", {
   logLevel: env.LOG_LEVEL,
   tempDir: process.env["TMPDIR"],
 });
+
+const recoveredRuntimeState = recoverAbandonedRuntimeState();
+if (recoveredRuntimeState.staleRuns > 0 || recoveredRuntimeState.failedQueueItems > 0) {
+  logger.warn("Recovered abandoned runtime state from previous process", recoveredRuntimeState);
+}
 
 // ---------------------------------------------------------------------------
 // Initialize memory system (creates directories if needed)
@@ -132,6 +138,31 @@ if (isWebhookMode) {
         const health = getRuntimeHealth();
         return new Response(JSON.stringify(health), {
           status: health.status === "ok" ? 200 : 503,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (req.method === "GET" && url.pathname === "/status") {
+        const chatIdParam = url.searchParams.get("chatId");
+        const chatId = chatIdParam ? Number(chatIdParam) : env.OWNER_TELEGRAM_USER_ID;
+        const health = getRuntimeHealth();
+        const agent = Number.isFinite(chatId) ? getAgentStatus(chatId) : null;
+        return new Response(JSON.stringify({ health, agent }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      if (req.method === "POST" && url.pathname === "/stop") {
+        const chatIdParam = url.searchParams.get("chatId");
+        const chatId = chatIdParam ? Number(chatIdParam) : env.OWNER_TELEGRAM_USER_ID;
+        if (!Number.isFinite(chatId)) {
+          return new Response(JSON.stringify({ ok: false, error: "Invalid chatId" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        const stopped = abortAgent(chatId);
+        return new Response(JSON.stringify({ ok: true, stopped }), {
           headers: { "Content-Type": "application/json" },
         });
       }

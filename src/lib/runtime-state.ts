@@ -1,3 +1,11 @@
+import {
+  getActiveRuns,
+  getQueueSnapshot,
+  markStaleRuns,
+  type AgentRunRecord,
+} from "./agent-runtime-store.ts";
+import { listManagedProcesses } from "./process-registry.ts";
+
 interface ActiveToolState {
   name: string;
   startedAt: number;
@@ -40,6 +48,28 @@ export interface RuntimeHealth {
   }>;
   lastCompletedAt: string | null;
   lastError: string | null;
+  durableRuns: Array<{
+    id: string;
+    chatId: number;
+    durationMs: number;
+    idleMs: number;
+    activeTool: string | null;
+    promptPreview: string;
+  }>;
+  queue: Array<{
+    id: string;
+    chatId: number;
+    status: string;
+    waitMs: number;
+    textLength: number;
+  }>;
+  processes: Array<{
+    id: string;
+    pid: number | null;
+    ageMs: number;
+    command: string;
+    cwd: string;
+  }>;
 }
 
 const AGENT_STALE_MS = Number(Bun.env["AGENT_STALE_MS"] ?? 20 * 60_000);
@@ -83,6 +113,14 @@ export function markToolEnded(chatId: number): void {
 }
 
 export function getRuntimeHealth(now = Date.now()): RuntimeHealth {
+  const staleDurableRuns = markStaleRuns(AGENT_STALE_MS);
+  if (staleDurableRuns.length > 0) {
+    for (const run of staleDurableRuns) {
+      activeTurns.delete(run.chatId);
+      lastError = `stale run ${run.id} for chat ${run.chatId}`;
+    }
+  }
+
   const active = [...activeTurns.values()].map((turn) => {
     const activeTool = turn.activeTool
       ? {
@@ -114,16 +152,66 @@ export function getRuntimeHealth(now = Date.now()): RuntimeHealth {
     }];
   });
 
+  const durableRuns = getActiveRuns().map((run: AgentRunRecord) => ({
+    id: run.id,
+    chatId: run.chatId,
+    durationMs: now - run.startedAt,
+    idleMs: now - run.lastActivityAt,
+    activeTool: run.activeTool,
+    promptPreview: run.promptPreview,
+  }));
+
+  const queue = getQueueSnapshot().map((item) => ({
+    id: item.id,
+    chatId: item.chatId,
+    status: item.status,
+    waitMs: now - item.enqueuedAt,
+    textLength: item.textLength,
+  }));
+  const processes = listManagedProcesses().map((proc) => ({
+    id: proc.id,
+    pid: proc.pid,
+    ageMs: now - proc.startedAt,
+    command: proc.command,
+    cwd: proc.cwd,
+  }));
+
+  const staleDurable = durableRuns.filter((run) => run.idleMs > AGENT_STALE_MS);
+  const recoveredStaleTurns = staleDurableRuns.map((run) => ({
+    chatId: run.chatId,
+    durationMs: now - run.startedAt,
+    idleMs: now - run.lastActivityAt,
+    reason: "durable_run_stale",
+    activeTool: run.activeTool
+      ? { name: run.activeTool, durationMs: now - run.lastActivityAt }
+      : undefined,
+  }));
+
   return {
-    status: staleTurns.length > 0 ? "degraded" : "ok",
+    status: staleTurns.length > 0 || staleDurable.length > 0 || recoveredStaleTurns.length > 0 ? "degraded" : "ok",
     uptimeSeconds: process.uptime(),
     thresholds: {
       agentStaleMs: AGENT_STALE_MS,
       toolStaleMs: TOOL_STALE_MS,
     },
     activeTurns: active,
-    staleTurns,
+    staleTurns: [
+      ...staleTurns,
+      ...recoveredStaleTurns,
+      ...staleDurable.map((run) => ({
+        chatId: run.chatId,
+        durationMs: run.durationMs,
+        idleMs: run.idleMs,
+        reason: "durable_run_stale",
+        activeTool: run.activeTool
+          ? { name: run.activeTool, durationMs: run.idleMs }
+          : undefined,
+      })),
+    ],
     lastCompletedAt: lastCompletedAt ? new Date(lastCompletedAt).toISOString() : null,
     lastError,
+    durableRuns,
+    queue,
+    processes,
   };
 }

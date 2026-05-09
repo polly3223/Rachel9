@@ -153,5 +153,5 @@ export async function processAgentPrompt(
         // Can't even send error message — give up
       }
     }
-  });
+  }, prompt.length);
 }
