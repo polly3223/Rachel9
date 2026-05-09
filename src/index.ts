@@ -10,6 +10,7 @@ import { initializeMemorySystem } from "./lib/memory.ts";
 import { setTelegramSender, setAgentExecutor, startTaskPoller, shutdownTasks } from "./lib/tasks.ts";
 import { getRuntimeHealth } from "./lib/runtime-state.ts";
 import { recoverAbandonedRuntimeState } from "./lib/agent-runtime-store.ts";
+import { killAllManagedProcesses } from "./lib/process-registry.ts";
 
 // ---------------------------------------------------------------------------
 // SAFETY GUARD: Prevent polling mode inside Docker containers.
@@ -90,6 +91,12 @@ function shutdown(): void {
 
   // Stop task poller
   shutdownTasks();
+
+  // Ensure tool subprocesses do not survive process shutdown.
+  const killedProcesses = killAllManagedProcesses("shutdown");
+  if (killedProcesses > 0) {
+    logger.warn("Killed managed processes during shutdown", { count: killedProcesses });
+  }
 
   // Close database (flushes WAL, releases file handles)
   try {

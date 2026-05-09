@@ -16,12 +16,14 @@ import {
   markToolStarted,
 } from "../lib/runtime-state.ts";
 import {
-  appendRunEvent,
   createRun,
   finishRun,
   touchRun,
 } from "../lib/agent-runtime-store.ts";
-import { killAllManagedProcesses } from "../lib/process-registry.ts";
+import {
+  killManagedProcessesForChat,
+  killManagedProcessesForScope,
+} from "../lib/process-registry.ts";
 import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform, compactMessages } from "./compaction.ts";
@@ -76,7 +78,11 @@ export class AgentRunner {
     this.sessionManager = SessionManager.open(contextFile, sessionDir);
 
     // Create tools
-    const tools = createAgentTools({ ...opts.toolDeps, chatId: opts.chatId });
+    const tools = createAgentTools({
+      ...opts.toolDeps,
+      chatId: opts.chatId,
+      getRunId: () => this.currentRunId,
+    });
 
     // Resolve thinking level from env (default: "off")
     const thinkingLevel = env.THINKING_LEVEL ?? "off";
@@ -303,16 +309,16 @@ export class AgentRunner {
       markAgentPromptStarted(this.chatId, text.length);
       timeout = setTimeout(() => {
         timedOut = true;
-        appendRunEvent({
-          runId,
-          chatId: this.chatId,
-          type: "run_timeout_requested",
-          data: { timeoutMs: AGENT_PROMPT_TIMEOUT_MS },
-        });
         logger.warn("Agent prompt timed out, aborting", {
           chatId: this.chatId,
           timeoutMs: AGENT_PROMPT_TIMEOUT_MS,
         });
+        touchRun(runId, {
+          chatId: this.chatId,
+          eventType: "run_timeout_requested",
+          data: { timeoutMs: AGENT_PROMPT_TIMEOUT_MS },
+        });
+        killManagedProcessesForScope(runId, "agent_prompt_timeout");
         this.agent.abort();
       }, AGENT_PROMPT_TIMEOUT_MS);
 
@@ -399,6 +405,7 @@ export class AgentRunner {
   }
 
   abort(reason = "aborted"): void {
+    const runId = this.currentRunId;
     if (this.currentRunId) {
       finishRun(this.currentRunId, {
         chatId: this.chatId,
@@ -406,7 +413,11 @@ export class AgentRunner {
         error: reason,
       });
     }
-    killAllManagedProcesses(reason);
+    if (runId) {
+      killManagedProcessesForScope(runId, reason);
+    } else {
+      killManagedProcessesForChat(this.chatId, reason);
+    }
     this.agent.abort();
   }
 

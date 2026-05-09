@@ -4,6 +4,8 @@ import { errorMessage } from "./errors.ts";
 
 export interface ManagedProcess {
   id: string;
+  chatId?: number;
+  scopeId?: string;
   command: string;
   cwd: string;
   pid: number | null;
@@ -31,7 +33,14 @@ export function listManagedProcesses(): ManagedProcess[] {
 export function killManagedProcess(id: string, reason = "killed"): boolean {
   const proc = processes.get(id);
   if (!proc || !proc.pid) return false;
-  logger.warn("Killing managed process", { id, pid: proc.pid, reason, command: proc.command });
+  logger.warn("Killing managed process", {
+    id,
+    chatId: proc.chatId,
+    scopeId: proc.scopeId,
+    pid: proc.pid,
+    reason,
+    command: proc.command,
+  });
   killProcessGroup(proc.pid, "SIGTERM");
   setTimeout(() => {
     if (processes.has(id) && proc.pid) {
@@ -49,6 +58,22 @@ export function killAllManagedProcesses(reason = "kill_all"): number {
   return count;
 }
 
+export function killManagedProcessesForChat(chatId: number, reason = "kill_chat"): number {
+  let count = 0;
+  for (const proc of processes.values()) {
+    if (proc.chatId === chatId && killManagedProcess(proc.id, reason)) count++;
+  }
+  return count;
+}
+
+export function killManagedProcessesForScope(scopeId: string, reason = "kill_scope"): number {
+  let count = 0;
+  for (const proc of processes.values()) {
+    if (proc.scopeId === scopeId && killManagedProcess(proc.id, reason)) count++;
+  }
+  return count;
+}
+
 export function execManagedCommand(
   command: string,
   cwd: string,
@@ -57,6 +82,8 @@ export function execManagedCommand(
     signal?: AbortSignal;
     timeout?: number;
     env?: NodeJS.ProcessEnv;
+    chatId?: number;
+    scopeId?: string | null;
   },
 ): Promise<{ exitCode: number | null }> {
   return new Promise((resolve, reject) => {
@@ -70,6 +97,8 @@ export function execManagedCommand(
 
     const record: ManagedProcess & { child: ChildProcess } = {
       id,
+      chatId: options.chatId,
+      scopeId: options.scopeId ?? undefined,
       command,
       cwd,
       pid: child.pid ?? null,
@@ -78,7 +107,14 @@ export function execManagedCommand(
     };
     processes.set(id, record);
 
-    logger.info("Managed process started", { id, pid: child.pid, cwd, command });
+    logger.info("Managed process started", {
+      id,
+      chatId: options.chatId,
+      scopeId: options.scopeId ?? undefined,
+      pid: child.pid,
+      cwd,
+      command,
+    });
 
     let timedOut = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -114,7 +150,13 @@ export function execManagedCommand(
       processes.delete(id);
       if (timeoutHandle) clearTimeout(timeoutHandle);
       options.signal?.removeEventListener("abort", onAbort);
-      logger.info("Managed process ended", { id, pid: child.pid, exitCode: code });
+      logger.info("Managed process ended", {
+        id,
+        chatId: options.chatId,
+        scopeId: options.scopeId ?? undefined,
+        pid: child.pid,
+        exitCode: code,
+      });
 
       if (options.signal?.aborted) {
         reject(new Error("aborted"));

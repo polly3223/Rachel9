@@ -23,6 +23,8 @@ export interface ToolDependencies {
   sendFile: (filePath: string, caption?: string) => Promise<void>;
   /** Chat that owns this tool set. Used for tracing/policy decisions. */
   chatId?: number;
+  /** Current durable run ID, used to scope managed subprocess cleanup. */
+  getRunId?: () => string | null;
 }
 
 const DEFAULT_BASH_TIMEOUT_SECONDS = Number(Bun.env["BASH_TOOL_TIMEOUT_SECONDS"] ?? "180");
@@ -187,12 +189,19 @@ function withToolRuntimePolicy(tool: AgentTool<any>, chatId?: number): AgentTool
  * - telegram_send_file: Send files to user
  */
 export function createAgentTools(deps: ToolDependencies): AgentTool[] {
+  const execManagedForChat: typeof execManagedCommand = (command, cwd, options) =>
+    execManagedCommand(command, cwd, {
+      ...options,
+      chatId: deps.chatId,
+      scopeId: deps.getRunId?.() ?? null,
+    });
+
   // 4 core coding tools: read, bash, edit, write
   const codingTools = [
     createReadTool(deps.cwd),
     createBashTool(deps.cwd, {
       operations: {
-        exec: execManagedCommand,
+        exec: execManagedForChat,
       },
     }),
     createEditTool(deps.cwd),

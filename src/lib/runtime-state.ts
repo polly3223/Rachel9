@@ -65,6 +65,8 @@ export interface RuntimeHealth {
   }>;
   processes: Array<{
     id: string;
+    chatId?: number;
+    scopeId?: string;
     pid: number | null;
     ageMs: number;
     command: string;
@@ -170,6 +172,8 @@ export function getRuntimeHealth(now = Date.now()): RuntimeHealth {
   }));
   const processes = listManagedProcesses().map((proc) => ({
     id: proc.id,
+    chatId: proc.chatId,
+    scopeId: proc.scopeId,
     pid: proc.pid,
     ageMs: now - proc.startedAt,
     command: proc.command,
