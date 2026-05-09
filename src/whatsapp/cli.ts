@@ -35,7 +35,25 @@ const QR_PATH = join(SHARED, "whatsapp-qr.png");
 
 const [command, ...args] = process.argv.slice(2);
 
+const COMMAND_TIMEOUTS_MS: Record<string, number> = {
+  status: 20_000,
+  groups: 60_000,
+  contacts: 120_000,
+  send: 60_000,
+  "send-file": 90_000,
+  messages: 60_000,
+  search: 60_000,
+  connect: 150_000,
+  "connect-qr": 150_000,
+  disconnect: 30_000,
+};
+
 async function main() {
+  const commandTimeout = setTimeout(() => {
+    console.error(`WhatsApp command timed out: ${command ?? "help"}`);
+    process.exit(124);
+  }, COMMAND_TIMEOUTS_MS[command ?? ""] ?? 30_000);
+
   switch (command) {
     case "connect": {
       const phone = args[0];
@@ -47,12 +65,13 @@ async function main() {
       }
 
       console.log("Connecting to WhatsApp via pairing code...");
-      const result = await connect("pairing", phone);
+      const result = await connect("pairing", phone, { timeoutMs: 30_000, maxReconnects: 0 });
 
       if (result.alreadyConnected) {
         console.log("Already connected to WhatsApp!");
         setupMessageListener();
-        return;
+        clearTimeout(commandTimeout);
+        process.exit(0);
       }
 
       if (result.pairingCode) {
@@ -68,10 +87,11 @@ async function main() {
         while (Date.now() < timeout) {
           await new Promise((r) => setTimeout(r, 2000));
           if (isConnected()) {
-            console.log("WhatsApp connected successfully!");
-            setupMessageListener();
-            await new Promise((r) => setTimeout(r, 3000));
-            return;
+          console.log("WhatsApp connected successfully!");
+          setupMessageListener();
+          await new Promise((r) => setTimeout(r, 3000));
+            clearTimeout(commandTimeout);
+            process.exit(0);
           }
         }
         console.error("Timed out waiting for pairing. Try again.");
@@ -82,12 +102,13 @@ async function main() {
 
     case "connect-qr": {
       console.log("Connecting to WhatsApp via QR code...");
-      const result = await connect("qr");
+      const result = await connect("qr", undefined, { timeoutMs: 30_000, maxReconnects: 0 });
 
       if (result.alreadyConnected) {
         console.log("Already connected to WhatsApp!");
         setupMessageListener();
-        return;
+        clearTimeout(commandTimeout);
+        process.exit(0);
       }
 
       if (result.qrDataUrl) {
@@ -105,7 +126,8 @@ async function main() {
             console.log("WhatsApp connected successfully!");
             setupMessageListener();
             await new Promise((r) => setTimeout(r, 3000));
-            return;
+            clearTimeout(commandTimeout);
+            process.exit(0);
           }
         }
         console.error("Timed out waiting for QR scan. Try again.");
@@ -115,10 +137,14 @@ async function main() {
     }
 
     case "status": {
-      const result = await connect();
-      if (result.alreadyConnected || isConnected()) {
-        console.log("connected");
-      } else {
+      try {
+        const result = await connect("qr", undefined, { timeoutMs: 10_000, maxReconnects: 1 });
+        if (result.alreadyConnected || isConnected()) {
+          console.log("connected");
+        } else {
+          console.log("disconnected");
+        }
+      } catch {
         console.log("disconnected");
       }
       break;
@@ -129,7 +155,7 @@ async function main() {
       const groups = await listGroups();
       if (groups.length === 0) {
         console.log("No groups found.");
-        return;
+        break;
       }
       console.log(`Found ${groups.length} groups:\n`);
       for (const g of groups) {
@@ -203,7 +229,7 @@ async function main() {
       const messages = getRecentMessages(chat, limit);
       if (messages.length === 0) {
         console.log("No cached messages found for this chat. Messages appear after they are received while connected.");
-        return;
+        break;
       }
       for (const m of messages) {
         const time = new Date(m.timestamp * 1000).toLocaleString("en-GB", { timeZone: "Europe/Zurich" });
@@ -258,13 +284,14 @@ Commands:
 <to> can be: phone number, contact name, or JID`);
   }
 
+  clearTimeout(commandTimeout);
   await new Promise((r) => setTimeout(r, 1000));
   process.exit(0);
 }
 
 async function ensureConnected(waitForSync = false): Promise<void> {
   if (!isConnected()) {
-    const result = await connect("qr");
+    const result = await connect("qr", undefined, { timeoutMs: 30_000, maxReconnects: 2 });
     if (!result.alreadyConnected && !isConnected()) {
       await new Promise((r) => setTimeout(r, 5000));
       if (!isConnected()) {

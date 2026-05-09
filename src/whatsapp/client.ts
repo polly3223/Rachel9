@@ -63,6 +63,18 @@ let onFailed: ((err: Error) => void) | null = null;
 // Connection mode for reconnects
 let currentMode: ConnectMode = "qr";
 let currentPhone: string | undefined;
+let reconnectAttempts = 0;
+let maxReconnectAttempts = 3;
+
+function failPendingConnect(err: Error): void {
+  const cb = onFailed;
+  if (cb) cb(err);
+}
+
+function closeSocketBestEffort(): void {
+  try { sock?.end(undefined); } catch { /* best effort */ }
+  sock = null;
+}
 
 // ---------------------------------------------------------------------------
 // Core: startSock — the Baileys-recommended pattern
@@ -114,16 +126,28 @@ async function startSock(): Promise<void> {
       if (code === DisconnectReason.loggedOut) {
         connectionStatus = "disconnected";
         sock = null;
+        failPendingConnect(new Error("WhatsApp logged out"));
         logger.info("WhatsApp logged out — session cleared");
       } else {
-        // 515 or any other disconnect — clean up old socket, then reconnect
+        reconnectAttempts++;
+        if (reconnectAttempts > maxReconnectAttempts) {
+          connectionStatus = "disconnected";
+          closeSocketBestEffort();
+          failPendingConnect(new Error(`WhatsApp reconnect failed after ${maxReconnectAttempts} attempts`));
+          logger.warn("WhatsApp reconnect limit reached", { attempts: reconnectAttempts });
+          return;
+        }
+
+        // 515 or any other disconnect — clean up old socket, then reconnect.
         connectionStatus = "connecting";
-        try { sock?.end(undefined); } catch { /* best effort */ }
-        sock = null;
-        logger.info("Reconnecting to WhatsApp...");
-        startSock();
+        closeSocketBestEffort();
+        logger.info("Reconnecting to WhatsApp...", { attempt: reconnectAttempts, maxReconnectAttempts });
+        void startSock().catch((err) => {
+          failPendingConnect(err instanceof Error ? err : new Error(String(err)));
+        });
       }
     } else if (connection === "open") {
+      reconnectAttempts = 0;
       connectionStatus = "connected";
       logger.info("WhatsApp connected");
       onConnected?.();
@@ -186,9 +210,15 @@ async function startSock(): Promise<void> {
 
 export type ConnectMode = "pairing" | "qr";
 
+export interface ConnectOptions {
+  timeoutMs?: number;
+  maxReconnects?: number;
+}
+
 export async function connect(
   mode: ConnectMode = "pairing",
   phoneNumber?: string,
+  options: ConnectOptions = {},
 ): Promise<{ qrDataUrl?: string; pairingCode?: string; alreadyConnected?: boolean }> {
   if (connectionStatus === "connected" && sock) {
     return { alreadyConnected: true };
@@ -196,31 +226,71 @@ export async function connect(
 
   currentMode = mode;
   currentPhone = phoneNumber;
+  maxReconnectAttempts = options.maxReconnects ?? 3;
+  reconnectAttempts = 0;
   connectionStatus = "connecting";
 
   return new Promise((resolve, reject) => {
+    const timeoutMs = options.timeoutMs ?? 30_000;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const err = new Error(`WhatsApp connect timed out after ${timeoutMs}ms`);
+      cleanup();
+      connectionStatus = "disconnected";
+      closeSocketBestEffort();
+      reject(err);
+    }, timeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      onQR = null;
+      onPairingCode = null;
+      onConnected = null;
+      onFailed = null;
+    };
+
     onQR = async (qr: string) => {
       try {
         const dataUrl = await QRCode.toDataURL(qr, { width: 400 });
+        if (settled) return;
+        settled = true;
+        cleanup();
         resolve({ qrDataUrl: dataUrl });
       } catch (err) {
+        cleanup();
         reject(err);
       }
     };
 
     onPairingCode = (code: string) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve({ pairingCode: code });
     };
 
     onConnected = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve({ alreadyConnected: true });
     };
 
     onFailed = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(err);
     };
 
-    startSock().catch(reject);
+    startSock().catch((err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    });
   });
 }
 

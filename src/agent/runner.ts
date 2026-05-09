@@ -9,6 +9,12 @@ import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { errorMessage } from "../lib/errors.ts";
 import { recordUsage } from "../lib/usage.ts";
+import {
+  markAgentPromptEnded,
+  markAgentPromptStarted,
+  markToolEnded,
+  markToolStarted,
+} from "../lib/runtime-state.ts";
 import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform, compactMessages } from "./compaction.ts";
@@ -27,6 +33,7 @@ function resolveDefaultModel() {
 }
 
 const DEFAULT_MODEL = resolveDefaultModel();
+const AGENT_PROMPT_TIMEOUT_MS = Number(Bun.env["AGENT_PROMPT_TIMEOUT_MS"] ?? 10 * 60_000);
 
 export interface AgentRunnerOptions {
   chatId: number;
@@ -112,8 +119,10 @@ export class AgentRunner {
         logger.info("Agent turn ended", { chatId: opts.chatId });
         this.trackUsage(event.message);
       } else if (event.type === "tool_execution_start") {
+        markToolStarted(opts.chatId, event.toolName);
         logger.info("Tool execution started", { chatId: opts.chatId, tool: event.toolName });
       } else if (event.type === "tool_execution_end") {
+        markToolEnded(opts.chatId);
         logger.info("Tool execution ended", { chatId: opts.chatId, tool: event.toolName });
       }
 
@@ -158,6 +167,7 @@ export class AgentRunner {
     const messages = this.agent.state.messages;
     const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(this.chatId));
     const contextFile = join(sessionDir, "context.jsonl");
+
     try {
       unlinkSync(contextFile);
     } catch {
@@ -223,10 +233,24 @@ export class AgentRunner {
       }
     });
 
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+    let promptError: string | undefined;
+
     try {
-      // Run agent — no timeout, let it work as long as it needs
+      // Run agent with a hard ceiling. A hung tool must not block the chat queue forever.
       const messageCountBefore = this.agent.state.messages.length;
       logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: messageCountBefore });
+      markAgentPromptStarted(this.chatId, text.length);
+      timeout = setTimeout(() => {
+        timedOut = true;
+        logger.warn("Agent prompt timed out, aborting", {
+          chatId: this.chatId,
+          timeoutMs: AGENT_PROMPT_TIMEOUT_MS,
+        });
+        this.agent.abort();
+      }, AGENT_PROMPT_TIMEOUT_MS);
+
       await this.agent.prompt(promptText, images);
       logger.info("Agent prompt completed", { chatId: this.chatId });
 
@@ -248,7 +272,9 @@ export class AgentRunner {
       const lastAssistant = [...messages].reverse().find((m: AgentMessage) => m.role === "assistant");
 
       let response = "(No response)";
-      if (lastAssistant) {
+      if (timedOut) {
+        response = "That operation took too long and I stopped it. Please try again with a smaller request, or ask me to continue from a specific point.";
+      } else if (lastAssistant) {
         // Check if the model returned an error (e.g. timeout, rate limit)
         const assistantRecord = lastAssistant as unknown as Record<string, unknown>;
         const stopReason = assistantRecord["stopReason"];
@@ -272,6 +298,7 @@ export class AgentRunner {
       return { response, toolsUsed };
     } catch (err) {
       const msg = errorMessage(err);
+      promptError = msg;
       logger.error("Agent prompt error", { chatId: this.chatId, error: msg });
 
       // Check for context overflow
@@ -282,6 +309,8 @@ export class AgentRunner {
 
       throw err;
     } finally {
+      if (timeout) clearTimeout(timeout);
+      markAgentPromptEnded(this.chatId, timedOut ? "timeout" : promptError);
       unsub();
     }
   }

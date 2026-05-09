@@ -8,6 +8,7 @@ import { errorMessage } from "./lib/errors.ts";
 import { initAgentSystem, agentPrompt } from "./agent/index.ts";
 import { initializeMemorySystem } from "./lib/memory.ts";
 import { setTelegramSender, setAgentExecutor, startTaskPoller, shutdownTasks } from "./lib/tasks.ts";
+import { getRuntimeHealth } from "./lib/runtime-state.ts";
 
 // ---------------------------------------------------------------------------
 // SAFETY GUARD: Prevent polling mode inside Docker containers.
@@ -128,7 +129,9 @@ if (isWebhookMode) {
 
       // Health check endpoint
       if (req.method === "GET" && url.pathname === "/health") {
-        return new Response(JSON.stringify({ status: "ok" }), {
+        const health = getRuntimeHealth();
+        return new Response(JSON.stringify(health), {
+          status: health.status === "ok" ? 200 : 503,
           headers: { "Content-Type": "application/json" },
         });
       }
