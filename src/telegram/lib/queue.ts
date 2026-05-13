@@ -1,4 +1,9 @@
 import { logger } from "../../lib/logger.ts";
+import {
+  enqueueTurn,
+  finishQueuedTurn,
+  startQueuedTurn,
+} from "../../lib/agent-runtime-store.ts";
 
 /**
  * Simple async queue that processes one task at a time.
@@ -11,13 +16,16 @@ class ChatQueue {
   /**
    * Enqueue a task. Returns when the task completes (not when it's enqueued).
    */
-  async enqueue(fn: () => Promise<void>): Promise<void> {
+  async enqueue(queueId: string, fn: () => Promise<void>): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       this.tasks.push(async () => {
         try {
+          startQueuedTurn(queueId);
           await fn();
+          finishQueuedTurn(queueId, "completed");
           resolve();
         } catch (err) {
+          finishQueuedTurn(queueId, "failed", err);
           reject(err as Error);
         }
       });
@@ -53,13 +61,14 @@ const queues = new Map<number, ChatQueue>();
  * Enqueue a task for a specific chat.
  * If the chat has a pending task, the new task waits.
  */
-export async function enqueueForChat(chatId: number, fn: () => Promise<void>): Promise<void> {
+export async function enqueueForChat(chatId: number, fn: () => Promise<void>, textLength = 0): Promise<void> {
   let queue = queues.get(chatId);
   if (!queue) {
     queue = new ChatQueue();
     queues.set(chatId, queue);
   }
 
-  logger.debug("Chat queue", { chatId, pending: queue.pending });
-  await queue.enqueue(fn);
+  const queueId = enqueueTurn(chatId, textLength);
+  logger.debug("Chat queue", { chatId, pending: queue.pending, queueId });
+  await queue.enqueue(queueId, fn);
 }

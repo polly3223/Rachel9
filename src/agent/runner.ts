@@ -15,6 +15,15 @@ import {
   markToolEnded,
   markToolStarted,
 } from "../lib/runtime-state.ts";
+import {
+  createRun,
+  finishRun,
+  touchRun,
+} from "../lib/agent-runtime-store.ts";
+import {
+  killManagedProcessesForChat,
+  killManagedProcessesForScope,
+} from "../lib/process-registry.ts";
 import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform, compactMessages } from "./compaction.ts";
@@ -53,6 +62,7 @@ export class AgentRunner {
   private sessionManager: SessionManager;
   private eventCallbacks: AgentEventCallback[] = [];
   private lastPersistedCount = 0;
+  private currentRunId: string | null = null;
 
   constructor(opts: AgentRunnerOptions) {
     this.chatId = opts.chatId;
@@ -68,7 +78,11 @@ export class AgentRunner {
     this.sessionManager = SessionManager.open(contextFile, sessionDir);
 
     // Create tools
-    const tools = createAgentTools(opts.toolDeps);
+    const tools = createAgentTools({
+      ...opts.toolDeps,
+      chatId: opts.chatId,
+      getRunId: () => this.currentRunId,
+    });
 
     // Resolve thinking level from env (default: "off")
     const thinkingLevel = env.THINKING_LEVEL ?? "off";
@@ -114,16 +128,57 @@ export class AgentRunner {
     this.agent.subscribe((event: AgentEvent) => {
       // Log key events for debugging
       if (event.type === "turn_start") {
+        if (this.currentRunId) {
+          touchRun(this.currentRunId, {
+            chatId: opts.chatId,
+            eventType: "turn_start",
+          });
+        }
         logger.info("Agent turn started", { chatId: opts.chatId });
       } else if (event.type === "turn_end") {
+        if (this.currentRunId) {
+          touchRun(this.currentRunId, {
+            chatId: opts.chatId,
+            eventType: "turn_end",
+          });
+        }
         logger.info("Agent turn ended", { chatId: opts.chatId });
         this.trackUsage(event.message);
       } else if (event.type === "tool_execution_start") {
         markToolStarted(opts.chatId, event.toolName);
+        if (this.currentRunId) {
+          touchRun(this.currentRunId, {
+            activeTool: event.toolName,
+            chatId: opts.chatId,
+            eventType: "tool_started",
+            data: {
+              toolCallId: event.toolCallId,
+              args: event.args,
+            },
+          });
+        }
         logger.info("Tool execution started", { chatId: opts.chatId, tool: event.toolName });
       } else if (event.type === "tool_execution_end") {
         markToolEnded(opts.chatId);
+        if (this.currentRunId) {
+          touchRun(this.currentRunId, {
+            activeTool: null,
+            chatId: opts.chatId,
+            eventType: event.isError ? "tool_failed" : "tool_completed",
+            data: {
+              toolCallId: event.toolCallId,
+              result: event.result,
+            },
+          });
+        }
         logger.info("Tool execution ended", { chatId: opts.chatId, tool: event.toolName });
+      } else if (event.type === "message_start" || event.type === "message_end") {
+        if (this.currentRunId) {
+          touchRun(this.currentRunId, {
+            chatId: opts.chatId,
+            eventType: event.type,
+          });
+        }
       }
 
       for (const cb of this.eventCallbacks) {
@@ -236,6 +291,16 @@ export class AgentRunner {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     let promptError: string | undefined;
+    const runId = createRun({
+      chatId: this.chatId,
+      prompt: promptText,
+      model: this.modelName,
+      metadata: {
+        imageCount: images?.length ?? 0,
+        messageCount: this.agent.state.messages.length,
+      },
+    });
+    this.currentRunId = runId;
 
     try {
       // Run agent with a hard ceiling. A hung tool must not block the chat queue forever.
@@ -248,6 +313,12 @@ export class AgentRunner {
           chatId: this.chatId,
           timeoutMs: AGENT_PROMPT_TIMEOUT_MS,
         });
+        touchRun(runId, {
+          chatId: this.chatId,
+          eventType: "run_timeout_requested",
+          data: { timeoutMs: AGENT_PROMPT_TIMEOUT_MS },
+        });
+        killManagedProcessesForScope(runId, "agent_prompt_timeout");
         this.agent.abort();
       }, AGENT_PROMPT_TIMEOUT_MS);
 
@@ -294,6 +365,12 @@ export class AgentRunner {
 
       // Persist session
       this.persistSession();
+      finishRun(runId, {
+        chatId: this.chatId,
+        status: timedOut ? "timeout" : "completed",
+        response,
+        data: { toolsUsed },
+      });
 
       return { response, toolsUsed };
     } catch (err) {
@@ -304,15 +381,44 @@ export class AgentRunner {
       // Check for context overflow
       if (this.isContextOverflow(msg)) {
         logger.warn("Context overflow detected, resetting session", { chatId: this.chatId });
+        finishRun(runId, {
+          chatId: this.chatId,
+          status: "failed",
+          error: err,
+          data: { reason: "context_overflow" },
+        });
         return this.handleContextOverflow(text);
       }
 
+      finishRun(runId, {
+        chatId: this.chatId,
+        status: timedOut ? "timeout" : "failed",
+        error: err,
+      });
       throw err;
     } finally {
       if (timeout) clearTimeout(timeout);
       markAgentPromptEnded(this.chatId, timedOut ? "timeout" : promptError);
       unsub();
+      this.currentRunId = null;
     }
+  }
+
+  abort(reason = "aborted"): void {
+    const runId = this.currentRunId;
+    if (this.currentRunId) {
+      finishRun(this.currentRunId, {
+        chatId: this.chatId,
+        status: "aborted",
+        error: reason,
+      });
+    }
+    if (runId) {
+      killManagedProcessesForScope(runId, reason);
+    } else {
+      killManagedProcessesForChat(this.chatId, reason);
+    }
+    this.agent.abort();
   }
 
   /**
