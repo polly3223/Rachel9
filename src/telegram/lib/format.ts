@@ -1,28 +1,88 @@
 import type { Api } from "grammy";
-import { logger } from "../../lib/logger.ts";
 import { CONSTANTS } from "../../config/constants.ts";
+import { logger } from "../../lib/logger.ts";
 
-/**
- * Sanitize text for Telegram's legacy Markdown parser.
- * - Strips language identifiers from code fences (```ts → ```)
- * - Closes unclosed code fences (prevents Markdown parse errors mid-stream)
- * - Escapes problematic characters outside code blocks
- */
-function sanitizeForTelegram(text: string): string {
-  // Strip language identifiers from code fences
-  let sanitized = text.replace(/```[a-zA-Z0-9_+-]+\n/g, "```\n");
+type HtmlToken = {
+  placeholder: string;
+  html: string;
+};
 
-  // Count backtick fences — if odd, the last one is unclosed
-  const fenceCount = (sanitized.match(/```/g) || []).length;
-  if (fenceCount % 2 !== 0) {
-    sanitized += "\n```";
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function tokenPlaceholder(index: number): string {
+  return `\u0000HTML_TOKEN_${index}\u0000`;
+}
+
+function restoreTokens(text: string, tokens: HtmlToken[]): string {
+  let restored = text;
+  for (const token of tokens) {
+    restored = restored.replaceAll(token.placeholder, token.html);
   }
+  return restored;
+}
 
-  return sanitized;
+function protectCode(markdown: string): { text: string; tokens: HtmlToken[] } {
+  const tokens: HtmlToken[] = [];
+
+  const addToken = (html: string): string => {
+    const placeholder = tokenPlaceholder(tokens.length);
+    tokens.push({ placeholder, html });
+    return placeholder;
+  };
+
+  let text = markdown.replace(/```(?:[a-zA-Z0-9_+-]+)?\n?([\s\S]*?)```/g, (_match, code: string) => {
+    return addToken(`<pre>${escapeHtml(code.trimEnd())}</pre>`);
+  });
+
+  text = text.replace(/```(?:[a-zA-Z0-9_+-]+)?\n?([\s\S]*)$/g, (_match, code: string) => {
+    return addToken(`<pre>${escapeHtml(code.trimEnd())}</pre>`);
+  });
+
+  text = text.replace(/`([^`\n]+)`/g, (_match, code: string) => {
+    return addToken(`<code>${escapeHtml(code)}</code>`);
+  });
+
+  return { text, tokens };
+}
+
+function convertLinks(text: string): string {
+  return text.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)\n]+)\)/g, (_match, label: string, url: string) => {
+    return `<a href="${url.replace(/"/g, "&quot;")}">${label}</a>`;
+  });
 }
 
 /**
- * Send a new message with Markdown formatting, falling back to plain text.
+ * Convert common Markdown into Telegram-friendly HTML.
+ *
+ * Code spans/blocks are protected first so bold/italic/list parsing cannot
+ * corrupt code content. Everything else is HTML-escaped before tags are added.
+ */
+export function markdownToHtml(markdown: string): string {
+  const { text, tokens } = protectCode(markdown);
+
+  let html = escapeHtml(text);
+
+  // Convert Markdown bullets before italic handling so leading "*" is not parsed.
+  html = html.replace(/^([ \t]*)[-*]\s+/gm, "$1• ");
+
+  html = convertLinks(html);
+
+  // Bold first, then italic. Keep this intentionally conservative.
+  html = html.replace(/\*\*([\s\S]+?)\*\*/g, "<b>$1</b>");
+  html = html.replace(/__([\s\S]+?)__/g, "<b>$1</b>");
+  html = html.replace(/(^|[^\w])\*([^*\n]+?)\*/g, "$1<i>$2</i>");
+  html = html.replace(/(^|[^\w])_([^_\n]+?)_/g, "$1<i>$2</i>");
+
+  return restoreTokens(html, tokens);
+}
+
+/**
+ * Send a new message with HTML formatting, falling back to plain text.
  * Returns the message_id.
  */
 export async function sendFormattedMessage(
@@ -30,25 +90,26 @@ export async function sendFormattedMessage(
   chatId: number,
   text: string,
 ): Promise<number> {
-  const sanitized = sanitizeForTelegram(text);
+  const formatted = markdownToHtml(text);
+
   try {
-    const msg = await api.sendMessage(chatId, sanitized, { parse_mode: "Markdown" });
+    const msg = await api.sendMessage(chatId, formatted, { parse_mode: "HTML" });
     return msg.message_id;
-  } catch {
-    // Markdown failed — send as plain text
+  } catch (err) {
+    logger.warn("sendFormattedMessage failed with HTML, falling back to plain", { chatId, error: String(err) });
     try {
       const msg = await api.sendMessage(chatId, text);
       return msg.message_id;
-    } catch (err) {
-      logger.error("sendFormattedMessage failed entirely", { chatId, error: String(err) });
-      throw err;
+    } catch (retryErr) {
+      logger.error("sendFormattedMessage failed entirely", { chatId, error: String(retryErr) });
+      throw retryErr;
     }
   }
 }
 
 /**
- * Edit an existing message with Markdown formatting, falling back to plain text.
- * Silently handles "message is not modified" and other edit errors.
+ * Edit an existing message with HTML formatting, falling back to plain text.
+ * Silently handles "message is not modified" and deleted-message edit errors.
  */
 export async function editFormattedMessage(
   api: Api,
@@ -56,11 +117,12 @@ export async function editFormattedMessage(
   messageId: number,
   text: string,
 ): Promise<void> {
-  if (!text.trim()) return; // Never edit with empty text
+  if (!text.trim()) return;
 
-  const sanitized = sanitizeForTelegram(text);
+  const formatted = markdownToHtml(text);
+
   try {
-    await api.editMessageText(chatId, messageId, sanitized, { parse_mode: "Markdown" });
+    await api.editMessageText(chatId, messageId, formatted, { parse_mode: "HTML" });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes("message is not modified")) return;
@@ -68,7 +130,7 @@ export async function editFormattedMessage(
       logger.debug("Message was deleted, can't edit", { chatId, messageId });
       return;
     }
-    // Markdown parse failed — retry without formatting
+
     try {
       await api.editMessageText(chatId, messageId, text);
     } catch (retryErr) {
@@ -95,9 +157,8 @@ export function splitMessage(text: string, maxLen = CONSTANTS.TELEGRAM_MAX_MESSA
       parts.push(remaining);
       break;
     }
-    // Find last newline before maxLen
     let splitIdx = remaining.lastIndexOf("\n", maxLen);
-    if (splitIdx < maxLen / 2) splitIdx = maxLen; // No good split point, hard cut
+    if (splitIdx < maxLen / 2) splitIdx = maxLen;
     parts.push(remaining.slice(0, splitIdx));
     remaining = remaining.slice(splitIdx).trimStart();
   }
