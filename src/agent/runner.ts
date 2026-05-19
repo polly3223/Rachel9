@@ -277,16 +277,19 @@ export class AgentRunner {
         lastAssistant = forcedFinalMessage;
       }
 
-      const response = timedOut
+      const baseResponse = timedOut
         ? "That operation took too long and I stopped it. Please try again with a smaller request, or ask me to continue from a specific point."
         : (textFromMessage(lastAssistant).trim() || "(No response)");
+      const response = !timedOut && hitToolRoundLimit
+        ? `I hit my tool limit (${MAX_TOOL_ROUNDS} tool rounds), so I stopped using tools and am giving you the best final answer from the work completed so far.\n\n${baseResponse}`
+        : baseResponse;
 
       if (lastAssistant) this.emit({ type: "turn_end", message: lastAssistant });
       finishRun(runId, {
         chatId: this.chatId,
         status: timedOut ? "timeout" : "completed",
         response,
-        data: { toolsUsed, runtime: "gemini-native" },
+        data: { toolsUsed, runtime: "gemini-native", hitToolRoundLimit },
       });
 
       return { response, toolsUsed };
