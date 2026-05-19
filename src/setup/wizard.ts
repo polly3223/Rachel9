@@ -56,15 +56,15 @@ async function main() {
   });
   if (p.isCancel(sharedFolder)) return cancel();
 
-  // 4. Z.ai API key
-  const zaiKey = await p.text({
-    message: "Z.ai API key:",
-    placeholder: "zai-...",
+  // 4. Gemini API key
+  const geminiKey = await p.text({
+    message: "Google AI Studio Gemini API key:",
+    placeholder: "AIza...",
     validate: (v) => {
-      if (!v || v.length < 5) return "Required — get from Z.ai dashboard";
+      if (!v || v.length < 10) return "Required — get from Google AI Studio";
     },
   });
-  if (p.isCancel(zaiKey)) return cancel();
+  if (p.isCancel(geminiKey)) return cancel();
 
   // 5. Optional: Groq API key for voice
   const groqKey = await p.text({
@@ -79,7 +79,8 @@ async function main() {
     `TELEGRAM_BOT_TOKEN=${botToken}`,
     `OWNER_TELEGRAM_USER_ID=${ownerId}`,
     `SHARED_FOLDER_PATH=${sharedFolder}`,
-    `ZAI_API_KEY=${zaiKey}`,
+    `GEMINI_API_KEY=${geminiKey}`,
+    "GEMINI_MODEL=gemini-3.5-flash",
     `STT_PROVIDER=groq`,
     groqKey ? `GROQ_API_KEY=${groqKey}` : "# GROQ_API_KEY=",
     "NODE_ENV=production",

@@ -1,6 +1,6 @@
 # Rachel9
 
-A personal AI assistant that lives in your Telegram. Built on the [pi-mono](https://github.com/nicholasgriffintn/pi-mono) agent framework. Supports multiple LLM providers out of the box: Google Gemini, OpenAI, Anthropic, and more via pi-ai.
+A personal AI assistant that lives in your Telegram. Rachel9 runs directly on Google's native Gemini SDK, with durable local sessions, persistent memory, tools, skills, media handling, and task scheduling in one Bun process.
 
 Rachel can read and create documents, search the web, write and run code, manage your WhatsApp, schedule tasks, remember things about you, and much more — all through a simple Telegram chat.
 
@@ -10,14 +10,14 @@ Rachel can read and create documents, search the web, write and run code, manage
 
 - **Telegram-native** — chat naturally, send voice messages, photos, documents
 - **Persistent memory** — Rachel remembers your preferences, past conversations, and important facts
-- **10 built-in tools** — file I/O, bash, grep, web search, web fetch, and more
-- **12 specialized skills** — PDF, Word, Excel, PowerPoint, web design, WhatsApp bridge, and more
+- **Built-in tools** — file I/O, bash, grep, web search, web fetch, Telegram file sending, and more
+- **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, WhatsApp bridge, and more
 - **Task scheduler** — cron-based reminders, bash jobs, and autonomous agent tasks
 - **Auto context compaction** — handles long conversations gracefully (180K token window)
 - **Voice transcription** — via Groq Whisper (free) or OpenAI Whisper
-- **WhatsApp bridge** — read messages, export contacts, send files through WhatsApp
-- **Streaming responses** — real-time message streaming with typing indicators
-- **Self-contained** — single Bun process, SQLite database, no external services beyond the LLM
+- **WhatsApp bridge skill** — read messages, export contacts, send files through WhatsApp
+- **Native multimodal Gemini** — forwards Telegram photos and documents directly to the model
+- **Self-contained** — single Bun process, SQLite database, no external services beyond Gemini and optional STT
 
 ## Quick Start
 
@@ -26,7 +26,7 @@ Rachel can read and create documents, search the web, write and run code, manage
 - [Bun](https://bun.sh) (v1.1+)
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
-- An LLM API key (Google AI Studio, OpenAI, Anthropic, or Z.ai)
+- A Google AI Studio API key for Gemini
 
 ### Setup
 
@@ -54,41 +54,42 @@ bun run start
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Bot token from @BotFather |
 | `OWNER_TELEGRAM_USER_ID` | Yes | — | Your Telegram user ID |
 | `SHARED_FOLDER_PATH` | Yes | — | Path for persistent data (memory, database, sessions) |
-| `GEMINI_API_KEY` | No* | — | Google AI Studio API key (recommended, enables Gemini Flash) |
-| `ZAI_API_KEY` | No* | — | Z.ai API key (fallback) |
-| `GEMINI_MODEL` | No | `gemini-3-flash-preview` | Override Gemini model name |
+| `GEMINI_API_KEY` | Yes | — | Google AI Studio API key |
+| `GEMINI_MODEL` | No | `gemini-3.5-flash` | Override Gemini model name |
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `THINKING_LEVEL` | No | `off` | `off`, `minimal`, `low`, `medium`, `high` |
 | `STT_PROVIDER` | No | `groq` | `groq` or `openai` (for voice messages) |
 | `GROQ_API_KEY` | No | — | Required if using Groq for voice transcription |
-
-\* At least one LLM API key is required (`GEMINI_API_KEY` or `ZAI_API_KEY`).
+| `OPENAI_API_KEY` | No | — | Required if using OpenAI for voice transcription |
 
 ## Architecture
 
 ```
 src/
-├── agent/          # Agent system — runner, tools, compaction, system prompt
+├── agent/          # Native Gemini runner, tools, compaction, system prompt
+│   ├── llm/        # Gemini SDK adapter + retries
+│   ├── runtime/    # Durable JSONL session storage
 │   └── tools/      # Custom tools: web search, web fetch, telegram file send
 ├── config/         # Environment validation (Zod) and tunable constants
 ├── lib/            # Database, memory, skills, task scheduler, usage tracking
-├── telegram/       # Bot setup, message handlers, media handlers, streaming
+├── telegram/       # Bot setup, message handlers, media handlers
 │   ├── handlers/   # Message processing, 7 media type handlers
 │   ├── lib/        # Queue, formatting, timestamps, transcription
 │   └── middleware/  # Auth guard (owner-only)
-├── whatsapp/       # WhatsApp Web bridge via Baileys
 ├── setup/          # Interactive setup wizard + systemd installer
 └── index.ts        # Entry point — webhook or polling mode
 ```
 
-**Agent**: Uses `pi-agent-core` with 10 tools (7 coding tools from pi-coding-agent + 3 custom). Sessions persist as JSONL files.
+**Agent**: Uses `@google/genai` directly. The runner stores durable JSONL sessions, calls Gemini with the full retained history, executes tool calls in rounds, and retries transient Gemini errors.
 
 **Memory**: Three layers — `MEMORY.md` (core facts, loaded every message), `daily-logs/` (conversation history), `context/` (deep topic knowledge).
 
 **Database**: SQLite with WAL mode. Tables: `conversations`, `tasks`, `usage`.
 
-**Skills**: Auto-discovered from `skills/` directory. Each skill has a `SKILL.md` with YAML frontmatter that gets injected into the system prompt.
+**Skills**: Auto-discovered from `skills/` directory. Each skill has a `SKILL.md` with YAML frontmatter that gets injected into the system prompt. Skills can include local scripts, for example the WhatsApp bridge lives under `skills/whatsapp-bridge/scripts/`.
+
+**Compaction**: Implemented in `src/agent/compaction.ts` and triggered by `src/agent/runner.ts`. When estimated retained history exceeds `MAX_CONTEXT_TOKENS * COMPACTION_THRESHOLD`, older turns are summarized with Gemini while the most recent turn pairs are kept verbatim.
 
 ## Docker
 
@@ -105,7 +106,7 @@ docker run -d \
   rachel9
 ```
 
-The Docker image includes Python 3, UV, pip, ffmpeg, git, and curl — everything Rachel needs to execute code and create documents.
+The Docker image includes Bun, Python 3, UV, ffmpeg, git, curl, and sudo — enough for Rachel to execute code, create documents, and install skill-specific dependencies inside the container when needed.
 
 ### Webhook Mode (Rachel Cloud)
 
@@ -129,7 +130,7 @@ All magic numbers live in `src/config/constants.ts`:
 MAX_CONTEXT_TOKENS: 180_000      // Hard context limit
 COMPACTION_THRESHOLD: 0.70        // Trigger compaction at 70%
 COMPACTION_KEEP_RECENT_TURNS: 10  // Always keep last 10 exchanges
-STREAM_THROTTLE_MS: 500           // Min ms between Telegram edits
+STREAM_THROTTLE_MS: 300           // Legacy throttle constant
 TELEGRAM_MAX_MESSAGE_LENGTH: 4096 // Telegram's hard limit
 TASK_POLL_INTERVAL_MS: 30_000     // Task scheduler poll interval
 ```
@@ -150,20 +151,23 @@ TASK_POLL_INTERVAL_MS: 30_000     // Task scheduler poll interval
 | `mcp-builder` | Guide for creating MCP servers |
 | `skill-creator` | Create new skills |
 | `slack-gif-creator` | Generate Slack GIFs |
+| `crm` | Build lightweight CRM workflows |
+| `social-media` | Social media planning and content workflows |
+| `whatsapp-bridge` | Connect and operate WhatsApp via Baileys |
 
 ## WhatsApp Bridge
 
-Connect Rachel to your WhatsApp to read messages, export contacts, and send files:
+WhatsApp is a skill, not core runtime code. The bridge scripts live under `skills/whatsapp-bridge/scripts/`, and the skill explains how to install dependencies if copied into a minimal container.
 
 ```bash
 # Generate QR code to link
-bun run src/whatsapp/cli.ts connect-qr
+bun run skills/whatsapp-bridge/scripts/cli.ts connect-qr
 
 # Export contacts from a group
-bun run src/whatsapp/cli.ts contacts "Group Name"
+bun run skills/whatsapp-bridge/scripts/cli.ts contacts "Group Name"
 
 # Send a message
-bun run src/whatsapp/cli.ts send "+1234567890" "Hello!"
+bun run skills/whatsapp-bridge/scripts/cli.ts send "+1234567890" "Hello!"
 ```
 
 ## Development

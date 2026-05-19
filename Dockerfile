@@ -1,6 +1,6 @@
 # Rachel9 — Multi-stage Dockerfile
 # Much simpler than Rachel8: no Claude CLI, no OAuth tokens, no credential sync.
-# Just Bun + pi-mono + Z.ai API key.
+# Just Bun + the native Gemini SDK runtime.
 
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — install dependencies
