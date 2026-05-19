@@ -69,6 +69,7 @@ export function markdownToHtml(markdown: string): string {
 
   // Convert Markdown bullets before italic handling so leading "*" is not parsed.
   html = html.replace(/^([ \t]*)[-*]\s+/gm, "$1• ");
+  html = html.replace(/^#{1,6}\s+(.+)$/gm, "<b>$1</b>");
 
   html = convertLinks(html);
 

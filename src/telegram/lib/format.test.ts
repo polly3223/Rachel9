@@ -12,6 +12,10 @@ describe("markdownToHtml", () => {
     expect(markdownToHtml("* first\n- second")).toBe("• first\n• second");
   });
 
+  test("converts markdown headings to bold text", () => {
+    expect(markdownToHtml("### 1. The Beginning")).toBe("<b>1. The Beginning</b>");
+  });
+
   test("escapes html outside code", () => {
     expect(markdownToHtml("Use <tag> & keep going")).toBe("Use &lt;tag&gt; &amp; keep going");
   });
