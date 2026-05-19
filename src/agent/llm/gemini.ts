@@ -7,6 +7,7 @@ import {
   type GenerateContentResponse,
   type Part,
 } from "@google/genai";
+import { logger } from "../../lib/logger.ts";
 import type { AgentMessage, ContentPart, ToolCallRecord, ToolDefinition, UsageMetadata } from "../runtime/types.ts";
 
 export interface GeminiTurnResult {
@@ -124,6 +125,55 @@ function extractText(response: GenerateContentResponse): string {
     .join("");
 }
 
+const TRANSIENT_RETRY_DELAYS_MS = [800, 1_600, 3_200];
+
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (error instanceof Error) {
+    return error.name === "AbortError" || error.message.toLowerCase().includes("abort");
+  }
+  return false;
+}
+
+function errorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function isTransientGeminiError(error: unknown): boolean {
+  const lower = errorText(error).toLowerCase();
+  return [
+    "\"code\":429",
+    "\"code\":500",
+    "\"code\":502",
+    "\"code\":503",
+    "\"code\":504",
+    "too many requests",
+    "internal server error",
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "resource_exhausted",
+    "unavailable",
+    "temporarily unavailable",
+  ].some((pattern) => lower.includes(pattern));
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Aborted"));
+      return;
+    }
+
+    const timeout = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timeout);
+      reject(new Error("Aborted"));
+    }, { once: true });
+  });
+}
+
 export class GeminiNativeClient {
   private readonly ai: GoogleGenAI;
   private readonly model: string;
@@ -140,27 +190,48 @@ export class GeminiNativeClient {
     tools: ToolDefinition[],
     signal?: AbortSignal,
   ): Promise<GeminiTurnResult> {
-    const response = await this.ai.models.generateContent({
-      model: this.model,
-      contents: messages.map(messageToGemini),
-      config: {
-        abortSignal: signal,
-        systemInstruction: this.systemPrompt,
-        tools: tools.length > 0
-          ? [{ functionDeclarations: tools.map(toFunctionDeclaration) }]
-          : undefined,
-        toolConfig: tools.length > 0
-          ? { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } }
-          : undefined,
-      },
-    });
+    let lastError: unknown;
 
-    return {
-      text: extractText(response),
-      toolCalls: extractToolCalls(response),
-      usage: toUsage(response),
-      modelVersion: response.modelVersion,
-      stopReason: response.candidates?.[0]?.finishReason,
-    };
+    for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        const response = await this.ai.models.generateContent({
+          model: this.model,
+          contents: messages.map(messageToGemini),
+          config: {
+            abortSignal: signal,
+            systemInstruction: this.systemPrompt,
+            tools: tools.length > 0
+              ? [{ functionDeclarations: tools.map(toFunctionDeclaration) }]
+              : undefined,
+            toolConfig: tools.length > 0
+              ? { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } }
+              : undefined,
+          },
+        });
+
+        return {
+          text: extractText(response),
+          toolCalls: extractToolCalls(response),
+          usage: toUsage(response),
+          modelVersion: response.modelVersion,
+          stopReason: response.candidates?.[0]?.finishReason,
+        };
+      } catch (err) {
+        lastError = err;
+        if (isAbortError(err, signal) || !isTransientGeminiError(err) || attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
+          throw err;
+        }
+
+        const delayMs = TRANSIENT_RETRY_DELAYS_MS[attempt]!;
+        logger.warn("Transient Gemini error, retrying", {
+          attempt: attempt + 1,
+          delayMs,
+          error: errorText(err).slice(0, 500),
+        });
+        await sleep(delayMs, signal);
+      }
+    }
+
+    throw lastError;
   }
 }
