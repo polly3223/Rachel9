@@ -5,7 +5,7 @@
 export const CONSTANTS = {
   // ── Context Management ──────────────────────────────────────────────
   /** Maximum context tokens before hard overflow. */
-  MAX_CONTEXT_TOKENS: 180_000,
+  MAX_CONTEXT_TOKENS: 500_000,
   /** Trigger compaction when estimated tokens exceed this fraction of MAX_CONTEXT_TOKENS. */
   COMPACTION_THRESHOLD: 0.70,
   /** Always keep the last N user+assistant turn pairs during compaction. */

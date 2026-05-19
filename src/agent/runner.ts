@@ -83,6 +83,7 @@ export class AgentRunner {
       apiKey: env.GEMINI_API_KEY,
       model: this.model,
       systemPrompt: buildStaticSystemPrompt(),
+      thinkingLevel: env.THINKING_LEVEL,
     });
 
     if (this.messages.length > 0) {

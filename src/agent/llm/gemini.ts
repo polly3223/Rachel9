@@ -1,6 +1,7 @@
 import {
   FunctionCallingConfigMode,
   GoogleGenAI,
+  ThinkingLevel,
   type Content,
   type FunctionCall,
   type FunctionDeclaration,
@@ -18,10 +19,26 @@ export interface GeminiTurnResult {
   stopReason?: string;
 }
 
+export type GeminiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
+
 export interface GeminiClientOptions {
   apiKey: string;
   model: string;
   systemPrompt: string;
+  thinkingLevel: GeminiThinkingLevel;
+}
+
+function toSdkThinkingLevel(level: Exclude<GeminiThinkingLevel, "off">): ThinkingLevel {
+  switch (level) {
+    case "minimal":
+      return ThinkingLevel.MINIMAL;
+    case "low":
+      return ThinkingLevel.LOW;
+    case "medium":
+      return ThinkingLevel.MEDIUM;
+    case "high":
+      return ThinkingLevel.HIGH;
+  }
 }
 
 function contentPartToGemini(part: ContentPart): Part {
@@ -178,11 +195,13 @@ export class GeminiNativeClient {
   private readonly ai: GoogleGenAI;
   private readonly model: string;
   private readonly systemPrompt: string;
+  private readonly thinkingLevel: GeminiThinkingLevel;
 
   constructor(opts: GeminiClientOptions) {
     this.ai = new GoogleGenAI({ apiKey: opts.apiKey });
     this.model = opts.model;
     this.systemPrompt = opts.systemPrompt;
+    this.thinkingLevel = opts.thinkingLevel;
   }
 
   async generate(
@@ -200,6 +219,9 @@ export class GeminiNativeClient {
           config: {
             abortSignal: signal,
             systemInstruction: this.systemPrompt,
+            thinkingConfig: this.thinkingLevel === "off" ? undefined : {
+              thinkingLevel: toSdkThinkingLevel(this.thinkingLevel),
+            },
             tools: tools.length > 0
               ? [{ functionDeclarations: tools.map(toFunctionDeclaration) }]
               : undefined,
