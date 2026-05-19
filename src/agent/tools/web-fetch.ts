@@ -1,6 +1,5 @@
 import { Type, type Static } from "@sinclair/typebox";
-import type { ToolDefinition, ToolResult } from "../runtime/types.ts";
-import { textPart } from "../runtime/types.ts";
+import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
 import { logger } from "../../lib/logger.ts";
 
 const WebFetchSchema = Type.Object({
@@ -32,13 +31,13 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-export function createWebFetchTool(): ToolDefinition<WebFetchParams> {
+export function createWebFetchTool(): AgentTool<typeof WebFetchSchema> {
   return {
     name: "web_fetch",
     label: "Web Fetch",
     description: "Fetch a URL and extract its text content. Returns the page text (HTML stripped). Max 15000 characters.",
     parameters: WebFetchSchema,
-    execute: async (_toolCallId: string, params: WebFetchParams): Promise<ToolResult<unknown>> => {
+    execute: async (_toolCallId: string, params: WebFetchParams): Promise<AgentToolResult<unknown>> => {
       logger.debug("Web fetch", { url: params.url });
 
       try {
@@ -53,7 +52,7 @@ export function createWebFetchTool(): ToolDefinition<WebFetchParams> {
 
         if (!response.ok) {
           return {
-          content: [textPart(`HTTP ${response.status}: ${response.statusText}`)],
+            content: [{ type: "text", text: `HTTP ${response.status}: ${response.statusText}` }],
             details: { status: response.status },
           };
         }
@@ -74,13 +73,13 @@ export function createWebFetchTool(): ToolDefinition<WebFetchParams> {
         }
 
         return {
-          content: [textPart(`Content from ${params.url}:\n\n${text}`)],
+          content: [{ type: "text", text: `Content from ${params.url}:\n\n${text}` }],
           details: { url: params.url, length: text.length },
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return {
-          content: [textPart(`Fetch failed: ${msg}`)],
+          content: [{ type: "text", text: `Fetch failed: ${msg}` }],
           details: { error: msg },
         };
       }

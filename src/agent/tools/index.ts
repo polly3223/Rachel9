@@ -1,9 +1,14 @@
-import { Type, type Static } from "@sinclair/typebox";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import type { ToolDefinition, ToolResult, ToolUpdateCallback } from "../runtime/types.ts";
-import { textPart } from "../runtime/types.ts";
+import {
+  createBashTool,
+  createEditTool,
+  createGrepTool,
+  createFindTool,
+  createLsTool,
+  createReadTool,
+  createWriteTool,
+} from "@mariozechner/pi-coding-agent";
+import type { AgentTool, AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { TextContent } from "@mariozechner/pi-ai";
 import { createWebSearchTool } from "./web-search.ts";
 import { createWebFetchTool } from "./web-fetch.ts";
 import { createTelegramSendFileTool } from "./telegram.ts";
@@ -12,9 +17,13 @@ import { errorMessage } from "../../lib/errors.ts";
 import { execManagedCommand } from "../../lib/process-registry.ts";
 
 export interface ToolDependencies {
+  /** Working directory for coding tools */
   cwd: string;
+  /** Function to send files via Telegram */
   sendFile: (filePath: string, caption?: string) => Promise<void>;
+  /** Chat that owns this tool set. Used for tracing/policy decisions. */
   chatId?: number;
+  /** Current durable run ID, used to scope managed subprocess cleanup. */
   getRunId?: () => string | null;
 }
 
@@ -31,58 +40,26 @@ const TOOL_POLICIES: Record<string, { timeoutMs?: number; mutating?: boolean }> 
   web_search: { timeoutMs: 20_000 },
 };
 
-const ReadSchema = Type.Object({
-  file_path: Type.String({ description: "Absolute or relative path to read" }),
-  max_chars: Type.Optional(Type.Number({ description: "Maximum characters to return" })),
-});
+function withDefaultBashTimeout(tool: AgentTool<any>): AgentTool<any> {
+  if (tool.name !== "bash") return tool;
 
-const WriteSchema = Type.Object({
-  file_path: Type.String({ description: "Absolute or relative path to write" }),
-  content: Type.String({ description: "Full file content" }),
-});
-
-const EditSchema = Type.Object({
-  file_path: Type.String({ description: "Absolute or relative path to edit" }),
-  old_string: Type.String({ description: "Exact text to replace" }),
-  new_string: Type.String({ description: "Replacement text" }),
-  replace_all: Type.Optional(Type.Boolean({ description: "Replace all matches instead of exactly one" })),
-});
-
-const BashSchema = Type.Object({
-  command: Type.String({ description: "Bash command to execute" }),
-  timeout: Type.Optional(Type.Number({ description: "Timeout in seconds" })),
-  cwd: Type.Optional(Type.String({ description: "Optional working directory" })),
-});
-
-const GrepSchema = Type.Object({
-  pattern: Type.String({ description: "Regex pattern to search for" }),
-  path: Type.Optional(Type.String({ description: "Path to search, defaults to cwd" })),
-});
-
-const FindSchema = Type.Object({
-  path: Type.Optional(Type.String({ description: "Directory to search, defaults to cwd" })),
-  name: Type.Optional(Type.String({ description: "Filename glob, e.g. *.ts" })),
-  max_results: Type.Optional(Type.Number({ description: "Maximum results to return" })),
-});
-
-const LsSchema = Type.Object({
-  path: Type.Optional(Type.String({ description: "Directory to list, defaults to cwd" })),
-});
-
-type ReadParams = Static<typeof ReadSchema>;
-type WriteParams = Static<typeof WriteSchema>;
-type EditParams = Static<typeof EditSchema>;
-type BashParams = Static<typeof BashSchema>;
-type GrepParams = Static<typeof GrepSchema>;
-type FindParams = Static<typeof FindSchema>;
-type LsParams = Static<typeof LsSchema>;
-
-function pathInCwd(cwd: string, path: string): string {
-  return path.startsWith("/") ? path : resolve(cwd, path);
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
+  const execute = tool.execute.bind(tool);
+  return {
+    ...tool,
+    description: `${tool.description}\n\nIf no timeout is provided, Rachel applies a default timeout of ${DEFAULT_BASH_TIMEOUT_SECONDS} seconds.`,
+    execute: async (
+      toolCallId: string,
+      params: Record<string, unknown>,
+      signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback,
+    ) => {
+      const nextParams = {
+        ...params,
+        timeout: params["timeout"] ?? DEFAULT_BASH_TIMEOUT_SECONDS,
+      };
+      return execute(toolCallId, nextParams, signal, onUpdate);
+    },
+  } as AgentTool;
 }
 
 function trimText(value: string): string {
@@ -91,11 +68,16 @@ function trimText(value: string): string {
     : value;
 }
 
-function capOutput(result: ToolResult<unknown>): ToolResult<unknown> {
+function capOutput<T>(result: Awaited<ReturnType<AgentTool<any>["execute"]>>): Awaited<ReturnType<AgentTool<any>["execute"]>> {
   return {
     ...result,
-    content: result.content.map((part) => part.type === "text" ? { ...part, text: trimText(part.text) } : part),
-    details: typeof result.details === "string" ? trimText(result.details) : result.details,
+    content: result.content.map((part) => {
+      if (part.type !== "text") return part;
+      return { ...part, text: trimText(part.text) } satisfies TextContent;
+    }),
+    details: typeof result.details === "string"
+      ? trimText(result.details) as T
+      : result.details,
   };
 }
 
@@ -134,7 +116,7 @@ async function withHardTimeout<T>(promise: Promise<T>, timeoutMs: number, toolNa
   }
 }
 
-function withToolRuntimePolicy(tool: ToolDefinition<any>, chatId?: number): ToolDefinition<any> {
+function withToolRuntimePolicy(tool: AgentTool<any>, chatId?: number): AgentTool<any> {
   const execute = tool.execute.bind(tool);
   const policy = TOOL_POLICIES[tool.name] ?? {};
   const timeoutMs = policy.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
@@ -144,13 +126,19 @@ function withToolRuntimePolicy(tool: ToolDefinition<any>, chatId?: number): Tool
     description: `${tool.description}\n\nRachel runtime policy: timeout=${Math.round(timeoutMs / 1000)}s, output cap=${TOOL_OUTPUT_MAX_CHARS} chars${policy.mutating ? ", mutating tool" : ""}.`,
     execute: async (
       toolCallId: string,
-      params: unknown,
+      params: Record<string, unknown>,
       signal?: AbortSignal,
-      onUpdate?: ToolUpdateCallback,
+      onUpdate?: AgentToolUpdateCallback,
     ) => {
       const startedAt = Date.now();
       const { signal: timeoutSignal, cleanup } = makeTimeoutSignal(signal, timeoutMs);
-      logger.info("Tool runtime start", { chatId, tool: tool.name, toolCallId, timeoutMs, mutating: policy.mutating ?? false });
+      logger.info("Tool runtime start", {
+        chatId,
+        tool: tool.name,
+        toolCallId,
+        timeoutMs,
+        mutating: policy.mutating ?? false,
+      });
 
       try {
         const result = await withHardTimeout(
@@ -158,7 +146,12 @@ function withToolRuntimePolicy(tool: ToolDefinition<any>, chatId?: number): Tool
           timeoutMs + 250,
           tool.name,
         );
-        logger.info("Tool runtime end", { chatId, tool: tool.name, toolCallId, durationMs: Date.now() - startedAt });
+        logger.info("Tool runtime end", {
+          chatId,
+          tool: tool.name,
+          toolCallId,
+          durationMs: Date.now() - startedAt,
+        });
         return capOutput(result);
       } catch (err) {
         logger.warn("Tool runtime error", {
@@ -169,178 +162,66 @@ function withToolRuntimePolicy(tool: ToolDefinition<any>, chatId?: number): Tool
           error: errorMessage(err),
         });
         return {
-          content: [textPart(`Tool ${tool.name} failed: ${errorMessage(err)}`)],
+          content: [{ type: "text", text: `Tool ${tool.name} failed: ${errorMessage(err)}` }],
           details: { error: errorMessage(err) },
         };
       } finally {
         cleanup();
       }
     },
-  };
+  } as AgentTool;
 }
 
-function createReadTool(cwd: string): ToolDefinition<ReadParams> {
-  return {
-    name: "read",
-    label: "Read File",
-    description: "Read a text file from disk.",
-    parameters: ReadSchema,
-    execute: async (_id, params) => {
-      const filePath = pathInCwd(cwd, params.file_path);
-      const maxChars = params.max_chars ?? TOOL_OUTPUT_MAX_CHARS;
-      const content = await readFile(filePath, "utf-8");
-      const text = content.length > maxChars
-        ? `${content.slice(0, maxChars)}\n\n[...file truncated at ${maxChars} chars]`
-        : content;
-      return { content: [textPart(text)], details: { filePath, length: content.length } };
-    },
-  };
-}
+/**
+ * Create all tools for an agent instance.
+ * Combines pi-coding-agent tools (7) with custom Rachel tools (3).
+ * Total: 10 tools.
+ *
+ * Coding tools (from pi-coding-agent):
+ * - createCodingTools(cwd): read, bash, edit, write (4)
+ * - createGrepTool(cwd): grep (1)
+ * - createFindTool(cwd): find (1)
+ * - createLsTool(cwd): ls (1)
+ *
+ * Custom tools:
+ * - web_search: DuckDuckGo search
+ * - web_fetch: URL content extraction
+ * - telegram_send_file: Send files to user
+ */
+export function createAgentTools(deps: ToolDependencies): AgentTool[] {
+  const execManagedForChat: typeof execManagedCommand = (command, cwd, options) =>
+    execManagedCommand(command, cwd, {
+      ...options,
+      chatId: deps.chatId,
+      scopeId: deps.getRunId?.() ?? null,
+    });
 
-function createWriteTool(cwd: string): ToolDefinition<WriteParams> {
-  return {
-    name: "write",
-    label: "Write File",
-    description: "Write a complete text file to disk, creating parent directories if needed.",
-    parameters: WriteSchema,
-    execute: async (_id, params) => {
-      const filePath = pathInCwd(cwd, params.file_path);
-      await mkdir(dirname(filePath), { recursive: true });
-      await writeFile(filePath, params.content);
-      return { content: [textPart(`Wrote ${filePath}`)], details: { filePath, length: params.content.length } };
-    },
-  };
-}
-
-function createEditTool(cwd: string): ToolDefinition<EditParams> {
-  return {
-    name: "edit",
-    label: "Edit File",
-    description: "Replace exact text in a text file. By default, exactly one match is required.",
-    parameters: EditSchema,
-    execute: async (_id, params) => {
-      const filePath = pathInCwd(cwd, params.file_path);
-      const content = await readFile(filePath, "utf-8");
-      const matches = content.split(params.old_string).length - 1;
-      if (matches === 0) throw new Error("old_string not found");
-      if (!params.replace_all && matches !== 1) {
-        throw new Error(`old_string matched ${matches} times; set replace_all=true or provide a more specific string`);
-      }
-      const next = params.replace_all
-        ? content.split(params.old_string).join(params.new_string)
-        : content.replace(params.old_string, params.new_string);
-      await writeFile(filePath, next);
-      return { content: [textPart(`Edited ${filePath}`)], details: { filePath, replacements: params.replace_all ? matches : 1 } };
-    },
-  };
-}
-
-function createBashTool(deps: ToolDependencies): ToolDefinition<BashParams> {
-  return {
-    name: "bash",
-    label: "Bash",
-    description: "Run a bash command in the workspace. Use non-interactive commands.",
-    parameters: BashSchema,
-    execute: async (_id, params, signal) => {
-      const workingDir = params.cwd ? pathInCwd(deps.cwd, params.cwd) : deps.cwd;
-      let output = "";
-      const result = await execManagedCommand(params.command, workingDir, {
-        timeout: params.timeout ?? DEFAULT_BASH_TIMEOUT_SECONDS,
-        signal,
-        chatId: deps.chatId,
-        scopeId: deps.getRunId?.() ?? null,
-        onData: (data) => {
-          output += data.toString("utf-8");
-        },
-      });
-      const text = output.trim() || `(command exited with code ${result.exitCode ?? "null"} and no output)`;
-      return { content: [textPart(text)], details: { exitCode: result.exitCode, cwd: workingDir } };
-    },
-  };
-}
-
-function createGrepTool(deps: ToolDependencies): ToolDefinition<GrepParams> {
-  return {
-    name: "grep",
-    label: "Grep",
-    description: "Search file contents using ripgrep.",
-    parameters: GrepSchema,
-    execute: async (_id, params, signal) => {
-      const searchPath = params.path ? pathInCwd(deps.cwd, params.path) : deps.cwd;
-      let output = "";
-      const result = await execManagedCommand(`rg --line-number -- ${shellQuote(params.pattern)} ${shellQuote(searchPath)}`, deps.cwd, {
-        timeout: 30,
-        signal,
-        chatId: deps.chatId,
-        scopeId: deps.getRunId?.() ?? null,
-        onData: (data) => {
-          output += data.toString("utf-8");
-        },
-      });
-      return {
-        content: [textPart(output.trim() || `No matches (exit ${result.exitCode})`)],
-        details: { exitCode: result.exitCode, path: searchPath },
-      };
-    },
-  };
-}
-
-function createFindTool(deps: ToolDependencies): ToolDefinition<FindParams> {
-  return {
-    name: "find",
-    label: "Find Files",
-    description: "Find files by name using the system find command.",
-    parameters: FindSchema,
-    execute: async (_id, params, signal) => {
-      const basePath = params.path ? pathInCwd(deps.cwd, params.path) : deps.cwd;
-      const max = params.max_results ?? 200;
-      const nameArg = params.name ? ` -name ${shellQuote(params.name)}` : "";
-      let output = "";
-      await execManagedCommand(`find ${shellQuote(basePath)}${nameArg} -maxdepth 8 | head -${Math.max(1, max)}`, deps.cwd, {
-        timeout: 30,
-        signal,
-        chatId: deps.chatId,
-        scopeId: deps.getRunId?.() ?? null,
-        onData: (data) => {
-          output += data.toString("utf-8");
-        },
-      });
-      return { content: [textPart(output.trim() || "No files found")], details: { path: basePath } };
-    },
-  };
-}
-
-function createLsTool(cwd: string): ToolDefinition<LsParams> {
-  return {
-    name: "ls",
-    label: "List Directory",
-    description: "List files and directories.",
-    parameters: LsSchema,
-    execute: async (_id, params) => {
-      const dir = params.path ? pathInCwd(cwd, params.path) : cwd;
-      if (!existsSync(dir)) throw new Error(`Path does not exist: ${dir}`);
-      const entries = await readdir(dir, { withFileTypes: true });
-      const lines = entries
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map((entry) => `${entry.isDirectory() ? "d" : "-"} ${entry.name}`);
-      return { content: [textPart(lines.join("\n") || "(empty)")], details: { path: dir, count: entries.length } };
-    },
-  };
-}
-
-export function createAgentTools(deps: ToolDependencies): ToolDefinition[] {
-  const tools: ToolDefinition<any>[] = [
+  // 4 core coding tools: read, bash, edit, write
+  const codingTools = [
     createReadTool(deps.cwd),
-    createBashTool(deps),
+    createBashTool(deps.cwd, {
+      operations: {
+        exec: execManagedForChat,
+      },
+    }),
     createEditTool(deps.cwd),
     createWriteTool(deps.cwd),
-    createGrepTool(deps),
-    createFindTool(deps),
+  ].map(withDefaultBashTimeout);
+
+  // 3 additional coding tools
+  const extraCodingTools = [
+    createGrepTool(deps.cwd),
+    createFindTool(deps.cwd),
     createLsTool(deps.cwd),
+  ];
+
+  // 3 custom Rachel tools
+  const customTools = [
     createWebSearchTool(),
     createWebFetchTool(),
     createTelegramSendFileTool(deps.sendFile),
   ];
 
-  return tools.map((tool) => withToolRuntimePolicy(tool, deps.chatId));
+  return [...codingTools, ...extraCodingTools, ...customTools]
+    .map((tool) => withToolRuntimePolicy(tool, deps.chatId)) as AgentTool[];
 }
