@@ -17,7 +17,12 @@ import makeWASocket, {
 } from "baileys";
 import QRCode from "qrcode";
 import { join } from "path";
-import { logger } from "../lib/logger.ts";
+
+const logger = {
+  info: (msg: string, ctx?: Record<string, unknown>) => console.log(`[INFO] ${msg}`, ctx ?? ""),
+  warn: (msg: string, ctx?: Record<string, unknown>) => console.warn(`[WARN] ${msg}`, ctx ?? ""),
+  error: (msg: string, ctx?: Record<string, unknown>) => console.error(`[ERROR] ${msg}`, ctx ?? ""),
+};
 
 // ---------------------------------------------------------------------------
 // Constants

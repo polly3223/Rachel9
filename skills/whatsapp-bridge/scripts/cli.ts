@@ -3,16 +3,16 @@
  * WhatsApp CLI — used by Rachel agent to interact with WhatsApp.
  *
  * Usage:
- *   bun run src/whatsapp/cli.ts connect <phone>   → Pairing code (default, phone-only)
- *   bun run src/whatsapp/cli.ts connect-qr         → QR code (saved as PNG)
- *   bun run src/whatsapp/cli.ts status              → Check connection status
- *   bun run src/whatsapp/cli.ts groups              → List all groups
- *   bun run src/whatsapp/cli.ts contacts <group>    → Export group contacts as CSV
- *   bun run src/whatsapp/cli.ts send <to> <msg>     → Send a message
- *   bun run src/whatsapp/cli.ts send-file <to> <path> [caption]  → Send a file
- *   bun run src/whatsapp/cli.ts messages <chat> [limit]  → Read recent messages
- *   bun run src/whatsapp/cli.ts search <query>      → Search contacts by name/number
- *   bun run src/whatsapp/cli.ts disconnect           → Logout and clear session
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts connect <phone>   -> Pairing code
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts connect-qr         -> QR code
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts status             -> Check status
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts groups             -> List groups
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts contacts <group>   -> Export contacts
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts send <to> <msg>    -> Send message
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts send-file <to> <path> [caption]
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts messages <chat> [limit]
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts search <query>
+ *   bun run skills/whatsapp-bridge/scripts/cli.ts disconnect
  */
 
 import {

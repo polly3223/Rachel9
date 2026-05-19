@@ -9,10 +9,10 @@ Use this skill for any WhatsApp task: connect/link WhatsApp, check status, list 
 
 ## Runtime
 
-Preferred CLI if present:
+Preferred CLI bundled with this skill:
 
 ```bash
-bun run src/whatsapp/cli.ts <command> [args...]
+bun run skills/whatsapp-bridge/scripts/cli.ts <command> [args...]
 ```
 
 If the CLI dependencies are missing in a local/dev container, install them in the repo root:
@@ -22,7 +22,7 @@ bun add baileys qrcode
 bun add -d @types/qrcode
 ```
 
-If `src/whatsapp/cli.ts` is not present, create a persistent bridge project under:
+If this skill was copied without its `scripts/` folder, create a persistent bridge project under:
 
 ```bash
 mkdir -p "$SHARED_FOLDER_PATH/whatsapp-bridge"
@@ -32,7 +32,7 @@ bun add baileys qrcode
 bun add -d @types/qrcode
 ```
 
-Then implement a small Bun CLI using Baileys with:
+Then copy or implement a small Bun CLI using Baileys with:
 - `useMultiFileAuthState("$SHARED_FOLDER_PATH/rachel-memory/whatsapp-auth")`
 - `Browsers.macOS("Google Chrome")`
 - `syncFullHistory: true`
@@ -48,7 +48,7 @@ When the user asks to connect WhatsApp:
 1. Run the QR connection in the background:
 
 ```bash
-nohup bun run src/whatsapp/cli.ts connect-qr > /tmp/wa-connect.log 2>&1 &
+nohup bun run skills/whatsapp-bridge/scripts/cli.ts connect-qr > /tmp/wa-connect.log 2>&1 &
 ```
 
 2. Wait for the QR image:
@@ -68,7 +68,7 @@ bun run src/telegram/send-file.ts "$SHARED_FOLDER_PATH/whatsapp-qr.png" "Scan th
 5. Check connection:
 
 ```bash
-grep "connected successfully\|connected" /tmp/wa-connect.log || bun run src/whatsapp/cli.ts status
+grep "connected successfully\|connected" /tmp/wa-connect.log || bun run skills/whatsapp-bridge/scripts/cli.ts status
 ```
 
 Only clear auth when the session is known expired or logged out:
@@ -82,7 +82,7 @@ rm -rf "$SHARED_FOLDER_PATH/rachel-memory/whatsapp-auth"/*
 Use only if the user asks for phone-number pairing:
 
 ```bash
-bun run src/whatsapp/cli.ts connect "+393343502266"
+bun run skills/whatsapp-bridge/scripts/cli.ts connect "+393343502266"
 ```
 
 Send the pairing code to the user and tell them:
@@ -93,19 +93,19 @@ WhatsApp -> Settings -> Linked Devices -> Link a Device -> Link with phone numbe
 Check status:
 
 ```bash
-bun run src/whatsapp/cli.ts status
+bun run skills/whatsapp-bridge/scripts/cli.ts status
 ```
 
 List groups:
 
 ```bash
-bun run src/whatsapp/cli.ts groups
+bun run skills/whatsapp-bridge/scripts/cli.ts groups
 ```
 
 Export group contacts:
 
 ```bash
-bun run src/whatsapp/cli.ts contacts "Group Name"
+bun run skills/whatsapp-bridge/scripts/cli.ts contacts "Group Name"
 ```
 
 Then send the generated CSV:
@@ -117,32 +117,32 @@ bun run src/telegram/send-file.ts "$SHARED_FOLDER_PATH/whatsapp-contacts-<group>
 Send a message:
 
 ```bash
-bun run src/whatsapp/cli.ts send "Clara" "Ciao! Come stai?"
-bun run src/whatsapp/cli.ts send "+393343502266" "Hey!"
+bun run skills/whatsapp-bridge/scripts/cli.ts send "Clara" "Ciao! Come stai?"
+bun run skills/whatsapp-bridge/scripts/cli.ts send "+393343502266" "Hey!"
 ```
 
 Send a file:
 
 ```bash
-bun run src/whatsapp/cli.ts send-file "+393343502266" "/path/to/file.pdf" "Here is the report"
+bun run skills/whatsapp-bridge/scripts/cli.ts send-file "+393343502266" "/path/to/file.pdf" "Here is the report"
 ```
 
 Read recent messages:
 
 ```bash
-bun run src/whatsapp/cli.ts messages "Marco" 20
+bun run skills/whatsapp-bridge/scripts/cli.ts messages "Marco" 20
 ```
 
 Search contacts:
 
 ```bash
-bun run src/whatsapp/cli.ts search "Marco"
+bun run skills/whatsapp-bridge/scripts/cli.ts search "Marco"
 ```
 
 Disconnect:
 
 ```bash
-bun run src/whatsapp/cli.ts disconnect
+bun run skills/whatsapp-bridge/scripts/cli.ts disconnect
 ```
 
 ## Notes
