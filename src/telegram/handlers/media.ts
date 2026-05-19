@@ -1,5 +1,5 @@
 import type { BotContext } from "../bot.ts";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ContentPart } from "../../agent/runtime/types.ts";
 import { downloadTelegramFile } from "../lib/file.ts";
 import { transcribeAudio } from "../lib/transcribe.ts";
 import { timestamp } from "../lib/timestamp.ts";
@@ -9,21 +9,21 @@ import { errorMessage } from "../../lib/errors.ts";
 import { env } from "../../config/env.ts";
 
 /**
- * Check if we're using a natively multimodal model (Gemini).
- * When true, images and audio are sent inline as base64 instead of file paths.
+ * Rachel Cloud is Gemini-only. Telegram still requires downloading files first;
+ * the agent receives model-ready inline media plus the saved file path.
  */
 function isNativeMultimodal(): boolean {
   return !!env.GEMINI_API_KEY;
 }
 
 /**
- * Read a local file and return as base64 ImageContent for pi-ai.
+ * Read a local file and return as base64 media content for Gemini.
  */
-async function fileToImageContent(filePath: string, mimeType: string): Promise<ImageContent> {
+async function fileToMediaContent(filePath: string, mimeType: string): Promise<ContentPart> {
   const file = Bun.file(filePath);
   const buffer = await file.arrayBuffer();
   const base64 = Buffer.from(buffer).toString("base64");
-  return { type: "image", data: base64, mimeType };
+  return { type: "media", data: base64, mimeType, fileName: filePath.split("/").pop() };
 }
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,7 @@ export const handlePhoto = withErrorHandling("image", async (ctx) => {
 
   if (isNativeMultimodal()) {
     // Send image inline as base64 — Gemini processes it natively
-    const imageContent = await fileToImageContent(localPath, "image/jpeg");
+    const imageContent = await fileToMediaContent(localPath, "image/jpeg");
     const prompt = `${ts} [User sent an image — also saved at: ${localPath}]\n\n${caption}`;
     await processAgentPrompt(ctx, chatId, prompt, `[Photo] ${caption}`, [imageContent]);
   } else {
@@ -91,8 +91,14 @@ export const handleDocument = withErrorHandling("file", async (ctx) => {
   const caption = ctx.message?.caption ?? `I sent you a file: ${fileName}`;
   const ts = timestamp();
   const prompt = `${ts} [User sent a file saved at: ${localPath} (filename: ${fileName})]\n\n${caption}`;
+  const mimeType = doc.mime_type ?? "application/octet-stream";
 
-  await processAgentPrompt(ctx, chatId, prompt, `[File: ${fileName}] ${caption}`);
+  if (isNativeMultimodal()) {
+    const mediaContent = await fileToMediaContent(localPath, mimeType);
+    await processAgentPrompt(ctx, chatId, prompt, `[File: ${fileName}] ${caption}`, [mediaContent]);
+  } else {
+    await processAgentPrompt(ctx, chatId, prompt, `[File: ${fileName}] ${caption}`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -108,7 +114,7 @@ export const handleVoice = withErrorHandling("voice message", async (ctx) => {
 
   if (isNativeMultimodal()) {
     // Send audio inline to Gemini — it understands speech natively
-    const audioContent = await fileToImageContent(localPath, "audio/ogg");
+    const audioContent = await fileToMediaContent(localPath, "audio/ogg");
     const caption = ctx.message?.caption;
     const ts = timestamp();
     const prompt = caption
@@ -145,7 +151,7 @@ export const handleAudio = withErrorHandling("audio file", async (ctx) => {
   const localPath = await downloadTelegramFile(audio.file_id, fileName);
 
   if (isNativeMultimodal()) {
-    const audioContent = await fileToImageContent(localPath, mimeType);
+    const audioContent = await fileToMediaContent(localPath, mimeType);
     const caption = ctx.message?.caption ?? `I sent you an audio file: ${fileName}`;
     const ts = timestamp();
     const prompt = `${ts} [User sent an audio file: ${fileName} — listen and respond]\n\n${caption}`;
@@ -178,7 +184,12 @@ export const handleVideo = withErrorHandling("video", async (ctx) => {
   const ts = timestamp();
   const prompt = `${ts} [User sent a video saved at: ${localPath} (filename: ${fileName}, duration: ${video.duration}s)]\n\n${caption}`;
 
-  await processAgentPrompt(ctx, chatId, prompt, `[Video: ${fileName}] ${caption}`);
+  if (isNativeMultimodal()) {
+    const mediaContent = await fileToMediaContent(localPath, video.mime_type ?? "video/mp4");
+    await processAgentPrompt(ctx, chatId, prompt, `[Video: ${fileName}] ${caption}`, [mediaContent]);
+  } else {
+    await processAgentPrompt(ctx, chatId, prompt, `[Video: ${fileName}] ${caption}`);
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -195,7 +206,12 @@ export const handleVideoNote = withErrorHandling("video note", async (ctx) => {
   const ts = timestamp();
   const prompt = `${ts} [User sent a video note (round video) saved at: ${localPath} (duration: ${videoNote.duration}s)]\n\nI sent you a video note.`;
 
-  await processAgentPrompt(ctx, chatId, prompt, "[Video note]");
+  if (isNativeMultimodal()) {
+    const mediaContent = await fileToMediaContent(localPath, "video/mp4");
+    await processAgentPrompt(ctx, chatId, prompt, "[Video note]", [mediaContent]);
+  } else {
+    await processAgentPrompt(ctx, chatId, prompt, "[Video note]");
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -215,11 +231,16 @@ export const handleSticker = withErrorHandling("sticker", async (ctx) => {
   if (sticker.is_animated || sticker.is_video) {
     // Animated/video stickers: metadata only (can't be analyzed without rendering)
     prompt = `${ts} [User sent a sticker: emoji ${emoji}, from set "${setName}"]`;
+    await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`);
   } else {
     // Static stickers: download and include path for visual analysis
     const localPath = await downloadTelegramFile(sticker.file_id, "sticker.webp");
     prompt = `${ts} [User sent a sticker saved at: ${localPath} (emoji: ${emoji}, set: "${setName}")]`;
+    if (isNativeMultimodal()) {
+      const mediaContent = await fileToMediaContent(localPath, "image/webp");
+      await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`, [mediaContent]);
+    } else {
+      await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`);
+    }
   }
-
-  await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`);
 });

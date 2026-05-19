@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition, ToolResult } from "../runtime/types.ts";
+import { textPart } from "../runtime/types.ts";
 import { logger } from "../../lib/logger.ts";
 
 const WebSearchSchema = Type.Object({
@@ -9,13 +10,13 @@ const WebSearchSchema = Type.Object({
 
 type WebSearchParams = Static<typeof WebSearchSchema>;
 
-export function createWebSearchTool(): AgentTool<typeof WebSearchSchema> {
+export function createWebSearchTool(): ToolDefinition<WebSearchParams> {
   return {
     name: "web_search",
     label: "Web Search",
     description: "Search the web using DuckDuckGo. Returns titles, URLs, and snippets.",
     parameters: WebSearchSchema,
-    execute: async (_toolCallId: string, params: WebSearchParams): Promise<AgentToolResult<unknown>> => {
+    execute: async (_toolCallId: string, params: WebSearchParams): Promise<ToolResult<unknown>> => {
       const numResults = Math.min(params.num_results ?? 5, 10);
       logger.debug("Web search", { query: params.query, numResults });
 
@@ -47,7 +48,7 @@ export function createWebSearchTool(): AgentTool<typeof WebSearchSchema> {
 
         if (results.length === 0) {
           return {
-            content: [{ type: "text", text: `No results found for: "${params.query}"` }],
+            content: [textPart(`No results found for: "${params.query}"`)],
             details: { resultCount: 0 },
           };
         }
@@ -57,13 +58,13 @@ export function createWebSearchTool(): AgentTool<typeof WebSearchSchema> {
           .join("\n\n");
 
         return {
-          content: [{ type: "text", text: `Search results for "${params.query}":\n\n${formatted}` }],
+          content: [textPart(`Search results for "${params.query}":\n\n${formatted}`)],
           details: { resultCount: results.length },
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return {
-          content: [{ type: "text", text: `Search failed: ${msg}` }],
+          content: [textPart(`Search failed: ${msg}`)],
           details: { error: msg },
         };
       }

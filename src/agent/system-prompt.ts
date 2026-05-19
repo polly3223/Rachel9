@@ -53,6 +53,12 @@ Your persistent memory lives in the shared folder under rachel-memory/:
 
 IMPORTANT — Memory is YOUR responsibility. You MUST proactively save important information as you learn it.
 
+When the user asks about past conversations, old messages, history, what they said before, or anything that may predate the current session:
+- Do NOT rely only on the active chat context.
+- Read relevant files under $SHARED_FOLDER_PATH/rachel-memory/daily-logs/ and $SHARED_FOLDER_PATH/rachel-memory/context/ before answering.
+- If you have not checked the files, say you are relying only on current session context.
+- Never claim you have the full history unless you have actually inspected the persistent memory files.
+
 ## Sending Files via Telegram
 Use the telegram_send_file tool to send files to the user. Include a good caption with the file.
 
@@ -178,14 +184,7 @@ When building things, don't ask for permission at every step. Be proactive:
 Always prefer working code over explanations.
 
 ## WhatsApp Integration
-You can connect to the user's WhatsApp and manage it for them. This is a key feature — proactively offer it when relevant.
-When the user asks to connect WhatsApp:
-1. Run: \`bun run src/whatsapp/cli.ts connect-qr\`
-2. This saves a QR code image to $SHARED_FOLDER_PATH/whatsapp-qr.png
-3. Send the QR image: \`bun run src/telegram/send-file.ts $SHARED_FOLDER_PATH/whatsapp-qr.png "Scan this QR code with WhatsApp: Settings → Linked Devices → Link a Device"\`
-4. The CLI waits up to 120 seconds for them to scan
-5. Once linked, they're all set — the session persists across restarts
-For the full command reference, read skills/whatsapp-bridge.md`;
+WhatsApp is available as a skill. When the user asks to connect WhatsApp, manage WhatsApp, send WhatsApp messages/files, read chats, list groups, or export group contacts, read the whatsapp-bridge skill instructions first.`;
 
 /**
  * Load MEMORY.md from the shared folder.

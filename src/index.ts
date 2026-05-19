@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { bot } from "./telegram/bot.ts";
 import { InputFile } from "grammy";
 import { env } from "./config/env.ts";
@@ -37,6 +38,23 @@ logger.info("Configuration loaded", {
 const recoveredRuntimeState = recoverAbandonedRuntimeState();
 if (recoveredRuntimeState.staleRuns > 0 || recoveredRuntimeState.failedQueueItems > 0) {
   logger.warn("Recovered abandoned runtime state from previous process", recoveredRuntimeState);
+}
+
+const UPGRADE_ANNOUNCEMENT_ID = "gemini-native-upgrade-2026-05-19";
+const UPGRADE_ANNOUNCEMENT_TEXT = "Quick update: Rachel now runs on a much better model. It should work better overall, especially for complex tasks.";
+
+async function sendUpgradeAnnouncementOnce(): Promise<void> {
+  const markerPath = join(env.SHARED_FOLDER_PATH, "rachel9", "announcements", `${UPGRADE_ANNOUNCEMENT_ID}.sent`);
+  if (existsSync(markerPath)) return;
+
+  try {
+    await bot.api.sendMessage(env.OWNER_TELEGRAM_USER_ID, UPGRADE_ANNOUNCEMENT_TEXT);
+    mkdirSync(dirname(markerPath), { recursive: true });
+    writeFileSync(markerPath, new Date().toISOString());
+    logger.info("Sent one-time upgrade announcement", { id: UPGRADE_ANNOUNCEMENT_ID });
+  } catch (err) {
+    logger.warn("Failed to send one-time upgrade announcement", { error: errorMessage(err) });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +152,7 @@ if (isWebhookMode) {
 
   // Initialize grammY bot internals without starting polling
   await bot.init();
+  await sendUpgradeAnnouncementOnce();
 
   Bun.serve({
     port: WEBHOOK_PORT,

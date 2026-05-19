@@ -2,7 +2,7 @@ import type { Api } from "grammy";
 import type { BotContext } from "../bot.ts";
 import { agentPrompt } from "../../agent/index.ts";
 import { setAgentBusy } from "../../lib/tasks.ts";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ContentPart } from "../../agent/runtime/types.ts";
 import { timestamp } from "../lib/timestamp.ts";
 import { sendFormattedMessage, splitMessage } from "../lib/format.ts";
 import { enqueueForChat } from "../lib/queue.ts";
@@ -24,6 +24,23 @@ function startTypingLoop(api: Api, chatId: number): () => void {
   send();
   const interval = setInterval(send, TYPING_INTERVAL_MS);
   return () => clearInterval(interval);
+}
+
+function userFacingAgentError(error: unknown): string {
+  const msg = errorMessage(error).toLowerCase();
+  if (
+    msg.includes("\"code\":502") ||
+    msg.includes("\"code\":503") ||
+    msg.includes("\"code\":504") ||
+    msg.includes("bad gateway") ||
+    msg.includes("service unavailable") ||
+    msg.includes("gateway timeout") ||
+    msg.includes("temporarily unavailable")
+  ) {
+    return "Gemini had a temporary server error while I was working. Some work may already be done - ask me to continue or check what was created.";
+  }
+
+  return "Sorry, something went wrong. Please try again.";
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +129,7 @@ export async function processAgentPrompt(
   chatId: number,
   prompt: string,
   logText?: string,
-  images?: ImageContent[],
+  media?: ContentPart[],
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
     const stopTyping = startTypingLoop(ctx.api, chatId);
@@ -121,7 +138,7 @@ export async function processAgentPrompt(
       void appendToDailyLog("user", logText ?? prompt);
 
       setAgentBusy(true);
-      const result = await agentPrompt(chatId, prompt, images);
+      const result = await agentPrompt(chatId, prompt, media);
       setAgentBusy(false);
 
       stopTyping();
@@ -148,7 +165,7 @@ export async function processAgentPrompt(
 
       logger.error("Message handler error", { chatId, error: errorMessage(err) });
       try {
-        await ctx.reply("Sorry, something went wrong. Please try again.");
+        await ctx.reply(userFacingAgentError(err));
       } catch {
         // Can't even send error message — give up
       }

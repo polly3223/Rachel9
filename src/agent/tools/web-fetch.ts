@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition, ToolResult } from "../runtime/types.ts";
+import { textPart } from "../runtime/types.ts";
 import { logger } from "../../lib/logger.ts";
 
 const WebFetchSchema = Type.Object({
@@ -31,13 +32,13 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-export function createWebFetchTool(): AgentTool<typeof WebFetchSchema> {
+export function createWebFetchTool(): ToolDefinition<WebFetchParams> {
   return {
     name: "web_fetch",
     label: "Web Fetch",
     description: "Fetch a URL and extract its text content. Returns the page text (HTML stripped). Max 15000 characters.",
     parameters: WebFetchSchema,
-    execute: async (_toolCallId: string, params: WebFetchParams): Promise<AgentToolResult<unknown>> => {
+    execute: async (_toolCallId: string, params: WebFetchParams): Promise<ToolResult<unknown>> => {
       logger.debug("Web fetch", { url: params.url });
 
       try {
@@ -52,7 +53,7 @@ export function createWebFetchTool(): AgentTool<typeof WebFetchSchema> {
 
         if (!response.ok) {
           return {
-            content: [{ type: "text", text: `HTTP ${response.status}: ${response.statusText}` }],
+          content: [textPart(`HTTP ${response.status}: ${response.statusText}`)],
             details: { status: response.status },
           };
         }
@@ -73,13 +74,13 @@ export function createWebFetchTool(): AgentTool<typeof WebFetchSchema> {
         }
 
         return {
-          content: [{ type: "text", text: `Content from ${params.url}:\n\n${text}` }],
+          content: [textPart(`Content from ${params.url}:\n\n${text}`)],
           details: { url: params.url, length: text.length },
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return {
-          content: [{ type: "text", text: `Fetch failed: ${msg}` }],
+          content: [textPart(`Fetch failed: ${msg}`)],
           details: { error: msg },
         };
       }
