@@ -138,6 +138,7 @@ export class AgentRunner {
     const abortController = new AbortController();
     this.currentAbortController = abortController;
     let timeout: ReturnType<typeof setTimeout> | undefined;
+    const messageCheckpoint = this.messages.length;
 
     try {
       logger.info("Agent prompt starting", {
@@ -323,6 +324,7 @@ export class AgentRunner {
         return this.handleContextOverflow(text);
       }
 
+      this.rollbackFailedTurn(messageCheckpoint);
       finishRun(runId, {
         chatId: this.chatId,
         status: timedOut ? "timeout" : "failed",
@@ -421,6 +423,16 @@ export class AgentRunner {
       "maximum context",
       "token limit",
     ].some((pattern) => lower.includes(pattern));
+  }
+
+  private rollbackFailedTurn(messageCheckpoint: number): void {
+    if (this.messages.length <= messageCheckpoint) return;
+    this.messages = this.messages.slice(0, messageCheckpoint);
+    this.sessionStore.rewrite(this.messages);
+    logger.info("Rolled back failed agent turn from session history", {
+      chatId: this.chatId,
+      messageCount: this.messages.length,
+    });
   }
 
   private async handleContextOverflow(originalText: string): Promise<PromptResult> {
