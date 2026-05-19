@@ -1,5 +1,6 @@
 import { Type, type Static } from "@sinclair/typebox";
-import type { AgentTool, AgentToolResult } from "@mariozechner/pi-agent-core";
+import type { ToolDefinition, ToolResult } from "../runtime/types.ts";
+import { textPart } from "../runtime/types.ts";
 import { logger } from "../../lib/logger.ts";
 
 const TelegramSendFileSchema = Type.Object({
@@ -15,20 +16,20 @@ type TelegramSendFileParams = Static<typeof TelegramSendFileSchema>;
  */
 export function createTelegramSendFileTool(
   sendFn: (filePath: string, caption?: string) => Promise<void>,
-): AgentTool<typeof TelegramSendFileSchema> {
+): ToolDefinition<TelegramSendFileParams> {
   return {
     name: "telegram_send_file",
     label: "Send File",
     description: "Send a file (image, document, video, audio) to the user via Telegram. Provide the absolute file path.",
     parameters: TelegramSendFileSchema,
-    execute: async (_toolCallId: string, params: TelegramSendFileParams): Promise<AgentToolResult<unknown>> => {
+    execute: async (_toolCallId: string, params: TelegramSendFileParams): Promise<ToolResult<unknown>> => {
       logger.debug("Telegram send file", { path: params.file_path });
 
       try {
         const file = Bun.file(params.file_path);
         if (!(await file.exists())) {
           return {
-            content: [{ type: "text", text: `File not found: ${params.file_path}` }],
+            content: [textPart(`File not found: ${params.file_path}`)],
             details: { error: "not_found" },
           };
         }
@@ -36,13 +37,13 @@ export function createTelegramSendFileTool(
         await sendFn(params.file_path, params.caption);
 
         return {
-          content: [{ type: "text", text: `File sent: ${params.file_path}${params.caption ? ` (caption: "${params.caption}")` : ""}` }],
+          content: [textPart(`File sent: ${params.file_path}${params.caption ? ` (caption: "${params.caption}")` : ""}`)],
           details: { sent: true },
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return {
-          content: [{ type: "text", text: `Failed to send file: ${msg}` }],
+          content: [textPart(`Failed to send file: ${msg}`)],
           details: { error: msg },
         };
       }

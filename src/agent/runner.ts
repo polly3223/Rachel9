@@ -1,10 +1,5 @@
-import { Agent, type AgentEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
-import { getModel } from "@mariozechner/pi-ai";
-import { MODELS } from "@mariozechner/pi-ai/dist/models.generated.js";
-import type { AssistantMessage, ImageContent, Message, Model } from "@mariozechner/pi-ai";
-import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { errorMessage } from "../lib/errors.ts";
@@ -15,67 +10,18 @@ import {
   markToolEnded,
   markToolStarted,
 } from "../lib/runtime-state.ts";
-import {
-  createRun,
-  finishRun,
-  touchRun,
-} from "../lib/agent-runtime-store.ts";
-import {
-  killManagedProcessesForChat,
-  killManagedProcessesForScope,
-} from "../lib/process-registry.ts";
+import { createRun, finishRun, touchRun } from "../lib/agent-runtime-store.ts";
+import { killManagedProcessesForChat, killManagedProcessesForScope } from "../lib/process-registry.ts";
 import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
-import { createContextTransform, compactMessages } from "./compaction.ts";
+import { compactMessages } from "./compaction.ts";
+import { GeminiNativeClient } from "./llm/gemini.ts";
+import { JsonlSessionStore } from "./runtime/session.ts";
+import type { AgentEvent, AgentEventCallback, AgentMessage, ContentPart, ToolDefinition } from "./runtime/types.ts";
+import { textPart } from "./runtime/types.ts";
 
-const GEMINI_MODEL_OVERRIDES: Record<string, Model<"google-generative-ai">> = {
-  // Temporary allow-list for same-day Gemini releases before pi-ai regenerates MODELS.
-  "gemini-3.5-flash": {
-    id: "gemini-3.5-flash",
-    name: "Gemini 3.5 Flash",
-    api: "google-generative-ai",
-    provider: "google",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: {
-      input: 0.5,
-      output: 3,
-      cacheRead: 0.05,
-      cacheWrite: 0,
-    },
-    contextWindow: 1048576,
-    maxTokens: 65536,
-  },
-};
-
-function resolveGeminiModel(modelName: string): Model<"google-generative-ai"> {
-  const registered = getModel("google", modelName as keyof typeof MODELS.google);
-  if (registered) return registered as Model<"google-generative-ai">;
-
-  const override = GEMINI_MODEL_OVERRIDES[modelName];
-  if (override) {
-    logger.warn("Using Gemini model override missing from pi-ai registry", {
-      model: modelName,
-    });
-    return override;
-  }
-
-  throw new Error(`Unsupported Gemini model: ${modelName}`);
-}
-
-// Pick model based on available API keys
-function resolveDefaultModel() {
-  if (env.GEMINI_API_KEY) {
-    const modelName = env.GEMINI_MODEL ?? "gemini-3-flash-preview";
-    logger.info("Using Gemini model", { model: modelName });
-    return resolveGeminiModel(modelName);
-  }
-  return getModel("zai", "glm-5");
-}
-
-const DEFAULT_MODEL = resolveDefaultModel();
 const AGENT_PROMPT_TIMEOUT_MS = Number(Bun.env["AGENT_PROMPT_TIMEOUT_MS"] ?? 10 * 60_000);
+const MAX_TOOL_ROUNDS = Number(Bun.env["AGENT_MAX_TOOL_ROUNDS"] ?? 12);
 
 export interface AgentRunnerOptions {
   chatId: number;
@@ -87,216 +33,68 @@ export interface PromptResult {
   toolsUsed: string[];
 }
 
-export type AgentEventCallback = (event: AgentEvent) => void;
+function resolveDefaultModel(): string {
+  const modelName = env.GEMINI_MODEL ?? "gemini-3.5-flash";
+  logger.info("Using Gemini native model", { model: modelName });
+  return modelName;
+}
+
+function textFromMessage(message: AgentMessage | undefined): string {
+  if (!message) return "";
+  return message.content
+    .filter((part): part is Extract<ContentPart, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+}
 
 export class AgentRunner {
   readonly chatId: number;
-  private agent: Agent;
-  private sessionManager: SessionManager;
-  private eventCallbacks: AgentEventCallback[] = [];
-  private lastPersistedCount = 0;
+  private readonly tools: ToolDefinition[];
+  private readonly model: string;
+  private readonly client: GeminiNativeClient;
+  private readonly sessionStore: JsonlSessionStore;
+  private readonly eventCallbacks: AgentEventCallback[] = [];
+  private messages: AgentMessage[] = [];
   private currentRunId: string | null = null;
+  private currentAbortController: AbortController | null = null;
+  private streaming = false;
 
   constructor(opts: AgentRunnerOptions) {
-    this.chatId = opts.chatId;
-
-    // Session directory: $SHARED_FOLDER_PATH/rachel9/sessions/<chatId>/
-    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(opts.chatId));
-    if (!existsSync(sessionDir)) {
-      mkdirSync(sessionDir, { recursive: true });
+    if (!env.GEMINI_API_KEY) {
+      throw new Error("GEMINI_API_KEY is required for Rachel9 Gemini-native runtime");
     }
 
-    // Create session manager
-    const contextFile = join(sessionDir, "context.jsonl");
-    this.sessionManager = SessionManager.open(contextFile, sessionDir);
+    this.chatId = opts.chatId;
+    this.model = resolveDefaultModel();
 
-    // Create tools
-    const tools = createAgentTools({
+    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(opts.chatId));
+    if (!existsSync(sessionDir)) mkdirSync(sessionDir, { recursive: true });
+
+    this.sessionStore = new JsonlSessionStore(join(sessionDir, "context.jsonl"));
+    this.messages = this.sessionStore.load();
+
+    this.tools = createAgentTools({
       ...opts.toolDeps,
       chatId: opts.chatId,
       getRunId: () => this.currentRunId,
     });
 
-    // Resolve thinking level from env (default: "off")
-    const thinkingLevel = env.THINKING_LEVEL ?? "off";
-
-    // Create agent with context compaction
-    this.agent = new Agent({
-      initialState: {
-        systemPrompt: buildStaticSystemPrompt(),
-        model: DEFAULT_MODEL,
-        thinkingLevel,
-        tools,
-      },
-      convertToLlm,
-      transformContext: createContextTransform(),
-      getApiKey: async (provider: string) => {
-        if (provider === "google") return env.GEMINI_API_KEY ?? undefined;
-        if (provider === "zai") return env.ZAI_API_KEY ?? undefined;
-        if (provider === "anthropic") return Bun.env["ANTHROPIC_API_KEY"] ?? undefined;
-        if (provider === "openai") return Bun.env["OPENAI_API_KEY"] ?? undefined;
-        if (provider === "groq") return Bun.env["GROQ_API_KEY"] ?? undefined;
-        return undefined;
-      },
+    this.client = new GeminiNativeClient({
+      apiKey: env.GEMINI_API_KEY,
+      model: this.model,
+      systemPrompt: buildStaticSystemPrompt(),
     });
-    this.agent.sessionId = `chat-${opts.chatId}`;
 
-    // Load existing session messages
-    const loaded = this.sessionManager.buildSessionContext();
-    if (loaded.messages.length > 0) {
-      this.agent.replaceMessages(loaded.messages);
-      this.lastPersistedCount = loaded.messages.length;
-      logger.info("Loaded session from disk", { chatId: opts.chatId, messageCount: loaded.messages.length });
-
-      // Proactive compaction: run transformContext on loaded messages immediately.
-      // Without this, compaction only runs when the agent makes an LLM call —
-      // if the context is already too large, the LLM returns empty responses
-      // instead of throwing a clear error, causing "(No response)" silently.
+    if (this.messages.length > 0) {
+      logger.info("Loaded session from disk", { chatId: opts.chatId, messageCount: this.messages.length });
       this.compactOnLoad(opts.chatId);
     } else {
       logger.info("No previous session found, starting fresh", { chatId: opts.chatId });
     }
 
-    // Wire up event forwarding + usage tracking
-    this.agent.subscribe((event: AgentEvent) => {
-      // Log key events for debugging
-      if (event.type === "turn_start") {
-        if (this.currentRunId) {
-          touchRun(this.currentRunId, {
-            chatId: opts.chatId,
-            eventType: "turn_start",
-          });
-        }
-        logger.info("Agent turn started", { chatId: opts.chatId });
-      } else if (event.type === "turn_end") {
-        if (this.currentRunId) {
-          touchRun(this.currentRunId, {
-            chatId: opts.chatId,
-            eventType: "turn_end",
-          });
-        }
-        logger.info("Agent turn ended", { chatId: opts.chatId });
-        this.trackUsage(event.message);
-      } else if (event.type === "tool_execution_start") {
-        markToolStarted(opts.chatId, event.toolName);
-        if (this.currentRunId) {
-          touchRun(this.currentRunId, {
-            activeTool: event.toolName,
-            chatId: opts.chatId,
-            eventType: "tool_started",
-            data: {
-              toolCallId: event.toolCallId,
-              args: event.args,
-            },
-          });
-        }
-        logger.info("Tool execution started", { chatId: opts.chatId, tool: event.toolName });
-      } else if (event.type === "tool_execution_end") {
-        markToolEnded(opts.chatId);
-        if (this.currentRunId) {
-          touchRun(this.currentRunId, {
-            activeTool: null,
-            chatId: opts.chatId,
-            eventType: event.isError ? "tool_failed" : "tool_completed",
-            data: {
-              toolCallId: event.toolCallId,
-              result: event.result,
-            },
-          });
-        }
-        logger.info("Tool execution ended", { chatId: opts.chatId, tool: event.toolName });
-      } else if (event.type === "message_start" || event.type === "message_end") {
-        if (this.currentRunId) {
-          touchRun(this.currentRunId, {
-            chatId: opts.chatId,
-            eventType: event.type,
-          });
-        }
-      }
-
-      for (const cb of this.eventCallbacks) {
-        try {
-          cb(event);
-        } catch (err) {
-          logger.error("Event callback error", { error: errorMessage(err) });
-        }
-      }
-    });
-
-    logger.info("AgentRunner created", { chatId: opts.chatId });
+    logger.info("Gemini-native AgentRunner created", { chatId: opts.chatId, toolCount: this.tools.length });
   }
 
-  /**
-   * Extract usage from an assistant message and record it.
-   */
-  private trackUsage(message: AgentMessage): void {
-    if (!message || message.role !== "assistant") return;
-
-    const assistantMsg = message as unknown as AssistantMessage;
-    const usage = assistantMsg.usage;
-    if (!usage) return;
-
-    recordUsage(this.chatId, {
-      model: assistantMsg.model ?? this.modelName,
-      provider: assistantMsg.provider ?? "unknown",
-      inputTokens: usage.input ?? 0,
-      outputTokens: usage.output ?? 0,
-      cacheRead: usage.cacheRead ?? 0,
-      cacheWrite: usage.cacheWrite ?? 0,
-      costTotal: usage.cost?.total ?? 0,
-    });
-  }
-
-  /**
-   * Rewrite the entire session file from current in-memory messages.
-   * Used after compaction (both on-load and mid-prompt) to keep disk in sync.
-   */
-  private rewriteSession(): void {
-    const messages = this.agent.state.messages;
-    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(this.chatId));
-    const contextFile = join(sessionDir, "context.jsonl");
-
-    try {
-      unlinkSync(contextFile);
-    } catch {
-      // File might not exist
-    }
-    this.sessionManager = SessionManager.open(contextFile, sessionDir);
-    for (const msg of messages) {
-      this.sessionManager.appendMessage(msg as unknown as Message);
-    }
-    this.lastPersistedCount = messages.length;
-    logger.info("Session file rewritten", { chatId: this.chatId, messageCount: messages.length });
-  }
-
-  /**
-   * Proactive compaction: run after loading session from disk.
-   * If context exceeds threshold, compact immediately and rewrite session file.
-   * Runs async (fire-and-forget) so it doesn't block constructor.
-   */
-  private compactOnLoad(chatId: number): void {
-    const messages = [...this.agent.state.messages];
-    compactMessages(messages).then((compacted) => {
-      if (compacted.length < messages.length) {
-        logger.info("Proactive compaction on load succeeded", {
-          chatId,
-          before: messages.length,
-          after: compacted.length,
-        });
-        this.agent.replaceMessages(compacted);
-        this.rewriteSession();
-      } else {
-        logger.info("Proactive compaction not needed", { chatId, messageCount: messages.length });
-      }
-    }).catch((err) => {
-      logger.warn("Proactive compaction on load failed", { chatId, error: errorMessage(err) });
-    });
-  }
-
-  /**
-   * Subscribe to agent events (streaming, tool execution, etc.)
-   * Returns unsubscribe function.
-   */
   onEvent(callback: AgentEventCallback): () => void {
     this.eventCallbacks.push(callback);
     return () => {
@@ -305,104 +103,157 @@ export class AgentRunner {
     };
   }
 
-  /**
-   * Send a message to the agent and get a response.
-   * Handles session persistence, system prompt refresh, and error recovery.
-   */
-  async prompt(text: string, images?: ImageContent[]): Promise<PromptResult> {
+  async prompt(text: string, media?: ContentPart[]): Promise<PromptResult> {
     const promptText = this.prependMessageTimestamp(text);
-
     const toolsUsed: string[] = [];
-
-    // Track tools used during this prompt
-    const unsub = this.agent.subscribe((event: AgentEvent) => {
-      if (event.type === "tool_execution_end") {
-        toolsUsed.push(event.toolName);
-      }
-    });
-
-    let timeout: ReturnType<typeof setTimeout> | undefined;
     let timedOut = false;
     let promptError: string | undefined;
+
     const runId = createRun({
       chatId: this.chatId,
       prompt: promptText,
       model: this.modelName,
       metadata: {
-        imageCount: images?.length ?? 0,
-        messageCount: this.agent.state.messages.length,
+        mediaCount: media?.length ?? 0,
+        messageCount: this.messages.length,
+        runtime: "gemini-native",
       },
     });
     this.currentRunId = runId;
 
+    const abortController = new AbortController();
+    this.currentAbortController = abortController;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+
     try {
-      // Run agent with a hard ceiling. A hung tool must not block the chat queue forever.
-      const messageCountBefore = this.agent.state.messages.length;
-      logger.info("Agent prompt starting", { chatId: this.chatId, textLength: text.length, images: images?.length ?? 0, existingMessages: messageCountBefore });
+      logger.info("Agent prompt starting", {
+        chatId: this.chatId,
+        textLength: text.length,
+        media: media?.length ?? 0,
+        existingMessages: this.messages.length,
+        runtime: "gemini-native",
+      });
+
       markAgentPromptStarted(this.chatId, text.length);
+      this.streaming = true;
+      this.emit({ type: "turn_start" });
+
       timeout = setTimeout(() => {
         timedOut = true;
-        logger.warn("Agent prompt timed out, aborting", {
-          chatId: this.chatId,
-          timeoutMs: AGENT_PROMPT_TIMEOUT_MS,
-        });
+        logger.warn("Agent prompt timed out, aborting", { chatId: this.chatId, timeoutMs: AGENT_PROMPT_TIMEOUT_MS });
         touchRun(runId, {
           chatId: this.chatId,
           eventType: "run_timeout_requested",
           data: { timeoutMs: AGENT_PROMPT_TIMEOUT_MS },
         });
         killManagedProcessesForScope(runId, "agent_prompt_timeout");
-        this.agent.abort();
+        abortController.abort("agent_prompt_timeout");
       }, AGENT_PROMPT_TIMEOUT_MS);
 
-      await this.agent.prompt(promptText, images);
-      logger.info("Agent prompt completed", { chatId: this.chatId });
+      const userMessage: AgentMessage = {
+        role: "user",
+        content: [textPart(promptText), ...(media ?? [])],
+        timestamp: Date.now(),
+      };
+      this.messages.push(userMessage);
+      this.sessionStore.append(userMessage);
 
-      // Detect if transformContext compacted during the LLM call.
-      // If message count dropped, the in-memory messages were replaced by a
-      // compacted version — we must rewrite the session file to stay in sync.
-      const messageCountAfter = this.agent.state.messages.length;
-      if (messageCountAfter < messageCountBefore) {
-        logger.info("Mid-prompt compaction detected, rewriting session file", {
-          chatId: this.chatId,
-          before: messageCountBefore,
-          after: messageCountAfter,
-        });
-        this.rewriteSession();
+      const compacted = await compactMessages(this.messages, abortController.signal);
+      if (compacted.length < this.messages.length) {
+        this.messages = compacted;
+        this.sessionStore.rewrite(this.messages);
       }
 
-      // Extract response text from last assistant message
-      const messages = this.agent.state.messages;
-      const lastAssistant = [...messages].reverse().find((m: AgentMessage) => m.role === "assistant");
+      let lastAssistant: AgentMessage | undefined;
 
-      let response = "(No response)";
-      if (timedOut) {
-        response = "That operation took too long and I stopped it. Please try again with a smaller request, or ask me to continue from a specific point.";
-      } else if (lastAssistant) {
-        // Check if the model returned an error (e.g. timeout, rate limit)
-        const assistantRecord = lastAssistant as unknown as Record<string, unknown>;
-        const stopReason = assistantRecord["stopReason"];
-        const errorMsg = assistantRecord["errorMessage"];
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        touchRun(runId, { chatId: this.chatId, eventType: "message_start", data: { round } });
+        this.emit({ type: "message_start" });
 
-        if (stopReason === "error" && errorMsg) {
-          logger.warn("Agent response ended with error", { chatId: this.chatId, error: String(errorMsg) });
-          response = `Sorry, the AI model returned an error: ${String(errorMsg)}\nPlease try again.`;
-        } else {
-          const textParts = lastAssistant.content
-            .filter((c): c is { type: "text"; text: string } => c.type === "text")
-            .map((c) => c.text)
-            .join("\n");
-          response = textParts || "(No response)";
+        const result = await this.client.generate(this.messages, this.tools, abortController.signal);
+        const assistantMessage: AgentMessage = {
+          role: "assistant",
+          content: result.text ? [textPart(result.text)] : [],
+          timestamp: Date.now(),
+          model: result.modelVersion ?? this.model,
+          provider: "google",
+          usage: result.usage,
+          stopReason: result.stopReason,
+          toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
+        };
+
+        this.messages.push(assistantMessage);
+        this.sessionStore.append(assistantMessage);
+        lastAssistant = assistantMessage;
+        this.trackUsage(assistantMessage);
+
+        this.emit({ type: "message_end" });
+        touchRun(runId, { chatId: this.chatId, eventType: "message_end", data: { round } });
+
+        if (result.toolCalls.length === 0) break;
+
+        for (const call of result.toolCalls) {
+          const tool = this.tools.find((candidate) => candidate.name === call.name);
+          if (!tool) {
+            const missingResult: AgentMessage = {
+              role: "toolResult",
+              content: [textPart(`Tool not found: ${call.name}`)],
+              timestamp: Date.now(),
+              toolCallId: call.id,
+              toolName: call.name,
+              details: { error: "tool_not_found" },
+              isError: true,
+            };
+            this.messages.push(missingResult);
+            this.sessionStore.append(missingResult);
+            continue;
+          }
+
+          toolsUsed.push(tool.name);
+          markToolStarted(this.chatId, tool.name);
+          this.emit({ type: "tool_execution_start", toolCallId: call.id, toolName: tool.name, args: call.args });
+          touchRun(runId, {
+            activeTool: tool.name,
+            chatId: this.chatId,
+            eventType: "tool_started",
+            data: { toolCallId: call.id, args: call.args },
+          });
+
+          const toolResult = await tool.execute(call.id, call.args, abortController.signal);
+          const isError = Boolean((toolResult.details as { error?: unknown } | undefined)?.error);
+          const toolMessage: AgentMessage = {
+            role: "toolResult",
+            content: toolResult.content,
+            timestamp: Date.now(),
+            toolCallId: call.id,
+            toolName: tool.name,
+            details: toolResult.details,
+            isError,
+          };
+
+          this.messages.push(toolMessage);
+          this.sessionStore.append(toolMessage);
+          markToolEnded(this.chatId);
+          this.emit({ type: "tool_execution_end", toolCallId: call.id, toolName: tool.name, result: toolResult, isError });
+          touchRun(runId, {
+            activeTool: null,
+            chatId: this.chatId,
+            eventType: isError ? "tool_failed" : "tool_completed",
+            data: { toolCallId: call.id, result: toolResult },
+          });
         }
       }
 
-      // Persist session
-      this.persistSession();
+      const response = timedOut
+        ? "That operation took too long and I stopped it. Please try again with a smaller request, or ask me to continue from a specific point."
+        : (textFromMessage(lastAssistant).trim() || "(No response)");
+
+      if (lastAssistant) this.emit({ type: "turn_end", message: lastAssistant });
       finishRun(runId, {
         chatId: this.chatId,
         status: timedOut ? "timeout" : "completed",
         response,
-        data: { toolsUsed },
+        data: { toolsUsed, runtime: "gemini-native" },
       });
 
       return { response, toolsUsed };
@@ -411,14 +262,12 @@ export class AgentRunner {
       promptError = msg;
       logger.error("Agent prompt error", { chatId: this.chatId, error: msg });
 
-      // Check for context overflow
       if (this.isContextOverflow(msg)) {
-        logger.warn("Context overflow detected, resetting session", { chatId: this.chatId });
         finishRun(runId, {
           chatId: this.chatId,
           status: "failed",
           error: err,
-          data: { reason: "context_overflow" },
+          data: { reason: "context_overflow", runtime: "gemini-native" },
         });
         return this.handleContextOverflow(text);
       }
@@ -427,127 +276,97 @@ export class AgentRunner {
         chatId: this.chatId,
         status: timedOut ? "timeout" : "failed",
         error: err,
+        data: { runtime: "gemini-native" },
       });
       throw err;
     } finally {
       if (timeout) clearTimeout(timeout);
-      markAgentPromptEnded(this.chatId, timedOut ? "timeout" : promptError);
-      unsub();
+      this.streaming = false;
+      this.currentAbortController = null;
       this.currentRunId = null;
+      markAgentPromptEnded(this.chatId, timedOut ? "timeout" : promptError);
     }
   }
 
   abort(reason = "aborted"): void {
     const runId = this.currentRunId;
-    if (this.currentRunId) {
-      finishRun(this.currentRunId, {
-        chatId: this.chatId,
-        status: "aborted",
-        error: reason,
-      });
-    }
     if (runId) {
+      finishRun(runId, { chatId: this.chatId, status: "aborted", error: reason });
       killManagedProcessesForScope(runId, reason);
     } else {
       killManagedProcessesForChat(this.chatId, reason);
     }
-    this.agent.abort();
+    this.currentAbortController?.abort(reason);
   }
 
-  /**
-   * Check if an error indicates context overflow.
-   */
+  get modelName(): string {
+    return this.model;
+  }
+
+  get messageCount(): number {
+    return this.messages.length;
+  }
+
+  get isStreaming(): boolean {
+    return this.streaming;
+  }
+
+  private emit(event: AgentEvent): void {
+    for (const cb of this.eventCallbacks) {
+      try {
+        cb(event);
+      } catch (err) {
+        logger.error("Event callback error", { error: errorMessage(err) });
+      }
+    }
+  }
+
+  private trackUsage(message: AgentMessage): void {
+    if (message.role !== "assistant" || !message.usage) return;
+
+    recordUsage(this.chatId, {
+      model: message.model ?? this.model,
+      provider: message.provider ?? "google",
+      inputTokens: message.usage.input,
+      outputTokens: message.usage.output,
+      cacheRead: message.usage.cacheRead,
+      cacheWrite: message.usage.cacheWrite,
+      costTotal: 0,
+    });
+  }
+
+  private compactOnLoad(chatId: number): void {
+    const messages = [...this.messages];
+    compactMessages(messages).then((compacted) => {
+      if (compacted.length < messages.length) {
+        this.messages = compacted;
+        this.sessionStore.rewrite(this.messages);
+        logger.info("Proactive compaction on load succeeded", { chatId, before: messages.length, after: compacted.length });
+      } else {
+        logger.info("Proactive compaction not needed", { chatId, messageCount: messages.length });
+      }
+    }).catch((err) => {
+      logger.warn("Proactive compaction on load failed", { chatId, error: errorMessage(err) });
+    });
+  }
+
   private isContextOverflow(error: string): boolean {
-    const patterns = [
+    const lower = error.toLowerCase();
+    return [
       "prompt is too long",
       "too many tokens",
       "context length",
       "request too large",
       "maximum context",
       "token limit",
-    ];
-    const lower = error.toLowerCase();
-    return patterns.some((p) => lower.includes(p));
+    ].some((pattern) => lower.includes(pattern));
   }
 
-  /**
-   * Handle context overflow: clear messages, create fresh session, retry.
-   */
   private async handleContextOverflow(originalText: string): Promise<PromptResult> {
-    // Clear agent messages
-    this.agent.clearMessages();
-
-    // Create new session
-    const sessionDir = join(env.SHARED_FOLDER_PATH, "rachel9", "sessions", String(this.chatId));
-    const contextFile = join(sessionDir, "context.jsonl");
-    this.sessionManager = SessionManager.open(contextFile, sessionDir);
-
-    const recoveryMessage = `[System: Previous conversation context was too large and has been reset. Your memory files (MEMORY.md, context/, daily-logs/) are intact. The user's original message follows.]\n\n${this.prependMessageTimestamp(originalText)}`;
-
-    try {
-      await this.agent.prompt(recoveryMessage);
-
-      const messages = this.agent.state.messages;
-      const lastAssistant = [...messages].reverse().find((m: AgentMessage) => m.role === "assistant");
-      const response = lastAssistant
-        ? lastAssistant.content
-            .filter((c): c is { type: "text"; text: string } => c.type === "text")
-            .map((c) => c.text)
-            .join("\n")
-        : "(No response after context reset)";
-
-      this.persistSession();
-      return { response, toolsUsed: [] };
-    } catch (retryErr) {
-      logger.error("Failed even after context reset", { error: errorMessage(retryErr) });
-      return {
-        response: "I encountered an error and couldn't recover. Please try again.",
-        toolsUsed: [],
-      };
-    }
-  }
-
-  /**
-   * Persist new agent messages to context.jsonl via SessionManager.
-   * SessionManager auto-writes to disk on appendMessage().
-   */
-  private persistSession(): void {
-    try {
-      const messages = this.agent.state.messages;
-      const newMessages = messages.slice(this.lastPersistedCount);
-
-      for (const msg of newMessages) {
-        // SessionManager.appendMessage expects pi-ai Message type
-        // AgentMessage is compatible — both have role + content
-        this.sessionManager.appendMessage(msg as unknown as Message);
-      }
-
-      this.lastPersistedCount = messages.length;
-      logger.debug("Session persisted", { chatId: this.chatId, newMessages: newMessages.length });
-    } catch (err) {
-      logger.warn("Failed to persist session", { chatId: this.chatId, error: errorMessage(err) });
-    }
-  }
-
-  /**
-   * Get the current model name.
-   */
-  get modelName(): string {
-    return this.agent.state.model?.name ?? "unknown";
-  }
-
-  /**
-   * Get current message count.
-   */
-  get messageCount(): number {
-    return this.agent.state.messages.length;
-  }
-
-  /**
-   * Check if agent is currently streaming.
-   */
-  get isStreaming(): boolean {
-    return this.agent.state.isStreaming;
+    this.messages = [];
+    this.sessionStore.rewrite(this.messages);
+    const recoveryMessage = `[System: Previous conversation context was too large and has been reset. Memory files are intact. The user's original message follows.]\n\n${this.prependMessageTimestamp(originalText)}`;
+    return this.prompt(recoveryMessage);
   }
 
   private prependMessageTimestamp(text: string): string {
@@ -558,17 +377,10 @@ export class AgentRunner {
       dateStyle: "full",
       timeStyle: "medium",
     });
-    const utc = now.toLocaleString("en-GB", {
-      timeZone: "UTC",
-      dateStyle: "full",
-      timeStyle: "medium",
-    });
 
-    const sections = [`[Message timestamp: ${cet} CET (${utc} UTC)]`];
-    if (dynamicContext) {
-      sections.push(`[Dynamic context for this message]\n${dynamicContext}`);
-    }
-    sections.push(text);
-    return sections.join("\n\n");
+    return `[Current date/time: ${cet} CET]\n${dynamicContext}\n\n${text}`;
   }
 }
+
+export type { AgentEventCallback };
+

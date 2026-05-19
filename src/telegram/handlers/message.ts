@@ -2,7 +2,7 @@ import type { Api } from "grammy";
 import type { BotContext } from "../bot.ts";
 import { agentPrompt } from "../../agent/index.ts";
 import { setAgentBusy } from "../../lib/tasks.ts";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ContentPart } from "../../agent/runtime/types.ts";
 import { timestamp } from "../lib/timestamp.ts";
 import { sendFormattedMessage, splitMessage } from "../lib/format.ts";
 import { enqueueForChat } from "../lib/queue.ts";
@@ -112,7 +112,7 @@ export async function processAgentPrompt(
   chatId: number,
   prompt: string,
   logText?: string,
-  images?: ImageContent[],
+  media?: ContentPart[],
 ): Promise<void> {
   await enqueueForChat(chatId, async () => {
     const stopTyping = startTypingLoop(ctx.api, chatId);
@@ -121,7 +121,7 @@ export async function processAgentPrompt(
       void appendToDailyLog("user", logText ?? prompt);
 
       setAgentBusy(true);
-      const result = await agentPrompt(chatId, prompt, images);
+      const result = await agentPrompt(chatId, prompt, media);
       setAgentBusy(false);
 
       stopTyping();
