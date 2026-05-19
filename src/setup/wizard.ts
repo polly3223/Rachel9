@@ -66,14 +66,6 @@ async function main() {
   });
   if (p.isCancel(geminiKey)) return cancel();
 
-  // 5. Optional: Groq API key for voice
-  const groqKey = await p.text({
-    message: "Groq API key (optional — for voice message transcription):",
-    placeholder: "gsk_... (press Enter to skip)",
-    initialValue: "",
-  });
-  if (p.isCancel(groqKey)) return cancel();
-
   // Build .env content
   const lines: string[] = [
     `TELEGRAM_BOT_TOKEN=${botToken}`,
@@ -81,8 +73,6 @@ async function main() {
     `SHARED_FOLDER_PATH=${sharedFolder}`,
     `GEMINI_API_KEY=${geminiKey}`,
     "GEMINI_MODEL=gemini-3.5-flash",
-    `STT_PROVIDER=groq`,
-    groqKey ? `GROQ_API_KEY=${groqKey}` : "# GROQ_API_KEY=",
     "NODE_ENV=production",
     "LOG_LEVEL=info",
   ];

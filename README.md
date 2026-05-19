@@ -2,7 +2,7 @@
 
 A personal AI assistant that lives in your Telegram. Rachel9 runs directly on Google's native Gemini SDK, with durable local sessions, persistent memory, tools, skills, media handling, and task scheduling in one Bun process.
 
-Rachel can read and create documents, search the web, write and run code, manage your WhatsApp, schedule tasks, remember things about you, and much more — all through a simple Telegram chat.
+Rachel can read and create documents, search the web, write and run code, schedule tasks, remember things about you, and much more — all through a simple Telegram chat.
 
 **Don't want to self-host?** Get a fully managed Rachel at [get-rachel.com](https://get-rachel.com) — no setup, no server, just start chatting.
 
@@ -11,13 +11,11 @@ Rachel can read and create documents, search the web, write and run code, manage
 - **Telegram-native** — chat naturally, send voice messages, photos, documents
 - **Persistent memory** — Rachel remembers your preferences, past conversations, and important facts
 - **Built-in tools** — file I/O, bash, grep, web search, web fetch, Telegram file sending, and more
-- **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, WhatsApp bridge, and more
+- **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, and more
 - **Task scheduler** — cron-based reminders, bash jobs, and autonomous agent tasks
 - **Auto context compaction** — handles long conversations gracefully (180K token window)
-- **Voice transcription** — via Groq Whisper (free) or OpenAI Whisper
-- **WhatsApp bridge skill** — read messages, export contacts, send files through WhatsApp
 - **Native multimodal Gemini** — forwards Telegram photos and documents directly to the model
-- **Self-contained** — single Bun process, SQLite database, no external services beyond Gemini and optional STT
+- **Self-contained** — single Bun process, SQLite database, no external services beyond Gemini
 
 ## Quick Start
 
@@ -59,9 +57,6 @@ bun run start
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `THINKING_LEVEL` | No | `off` | `off`, `minimal`, `low`, `medium`, `high` |
-| `STT_PROVIDER` | No | `groq` | `groq` or `openai` (for voice messages) |
-| `GROQ_API_KEY` | No | — | Required if using Groq for voice transcription |
-| `OPENAI_API_KEY` | No | — | Required if using OpenAI for voice transcription |
 
 ## Architecture
 
@@ -75,7 +70,7 @@ src/
 ├── lib/            # Database, memory, skills, task scheduler, usage tracking
 ├── telegram/       # Bot setup, message handlers, media handlers
 │   ├── handlers/   # Message processing, 7 media type handlers
-│   ├── lib/        # Queue, formatting, timestamps, transcription
+│   ├── lib/        # Queue, formatting, timestamps
 │   └── middleware/  # Auth guard (owner-only)
 ├── setup/          # Interactive setup wizard + systemd installer
 └── index.ts        # Entry point — webhook or polling mode
@@ -87,7 +82,7 @@ src/
 
 **Database**: SQLite with WAL mode. Tables: `conversations`, `tasks`, `usage`.
 
-**Skills**: Auto-discovered from `skills/` directory. Each skill has a `SKILL.md` with YAML frontmatter that gets injected into the system prompt. Skills can include local scripts, for example the WhatsApp bridge lives under `skills/whatsapp-bridge/scripts/`.
+**Skills**: Auto-discovered from `skills/` directory. Each skill has a `SKILL.md` with YAML frontmatter that gets injected into the system prompt. Skills can include their own local scripts and dependency/setup instructions.
 
 **Compaction**: Implemented in `src/agent/compaction.ts` and triggered by `src/agent/runner.ts`. When estimated retained history exceeds `MAX_CONTEXT_TOKENS * COMPACTION_THRESHOLD`, older turns are summarized with Gemini while the most recent turn pairs are kept verbatim.
 
@@ -153,22 +148,6 @@ TASK_POLL_INTERVAL_MS: 30_000     // Task scheduler poll interval
 | `slack-gif-creator` | Generate Slack GIFs |
 | `crm` | Build lightweight CRM workflows |
 | `social-media` | Social media planning and content workflows |
-| `whatsapp-bridge` | Connect and operate WhatsApp via Baileys |
-
-## WhatsApp Bridge
-
-WhatsApp is a skill, not core runtime code. The bridge scripts live under `skills/whatsapp-bridge/scripts/`, and the skill explains how to install dependencies if copied into a minimal container.
-
-```bash
-# Generate QR code to link
-bun run skills/whatsapp-bridge/scripts/cli.ts connect-qr
-
-# Export contacts from a group
-bun run skills/whatsapp-bridge/scripts/cli.ts contacts "Group Name"
-
-# Send a message
-bun run skills/whatsapp-bridge/scripts/cli.ts send "+1234567890" "Hello!"
-```
 
 ## Development
 
