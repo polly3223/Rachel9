@@ -1,7 +1,7 @@
 import { Agent, type AgentEvent, type AgentMessage } from "@mariozechner/pi-agent-core";
 import { getModel } from "@mariozechner/pi-ai";
 import { MODELS } from "@mariozechner/pi-ai/dist/models.generated.js";
-import type { AssistantMessage, ImageContent, Message } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ImageContent, Message, Model } from "@mariozechner/pi-ai";
 import { convertToLlm, SessionManager } from "@mariozechner/pi-coding-agent";
 import { join } from "node:path";
 import { mkdirSync, existsSync, unlinkSync } from "node:fs";
@@ -28,15 +28,48 @@ import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-pro
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { createContextTransform, compactMessages } from "./compaction.ts";
 
+const GEMINI_MODEL_OVERRIDES: Record<string, Model<"google-generative-ai">> = {
+  // Temporary allow-list for same-day Gemini releases before pi-ai regenerates MODELS.
+  "gemini-3.5-flash": {
+    id: "gemini-3.5-flash",
+    name: "Gemini 3.5 Flash",
+    api: "google-generative-ai",
+    provider: "google",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: {
+      input: 0.5,
+      output: 3,
+      cacheRead: 0.05,
+      cacheWrite: 0,
+    },
+    contextWindow: 1048576,
+    maxTokens: 65536,
+  },
+};
+
+function resolveGeminiModel(modelName: string): Model<"google-generative-ai"> {
+  const registered = getModel("google", modelName as keyof typeof MODELS.google);
+  if (registered) return registered as Model<"google-generative-ai">;
+
+  const override = GEMINI_MODEL_OVERRIDES[modelName];
+  if (override) {
+    logger.warn("Using Gemini model override missing from pi-ai registry", {
+      model: modelName,
+    });
+    return override;
+  }
+
+  throw new Error(`Unsupported Gemini model: ${modelName}`);
+}
+
 // Pick model based on available API keys
 function resolveDefaultModel() {
   if (env.GEMINI_API_KEY) {
     const modelName = env.GEMINI_MODEL ?? "gemini-3-flash-preview";
-    if (!(modelName in MODELS.google)) {
-      throw new Error(`Unsupported Gemini model: ${modelName}`);
-    }
     logger.info("Using Gemini model", { model: modelName });
-    return getModel("google", modelName as keyof typeof MODELS.google);
+    return resolveGeminiModel(modelName);
   }
   return getModel("zai", "glm-5");
 }
