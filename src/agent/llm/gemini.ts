@@ -10,6 +10,7 @@ import {
 } from "@google/genai";
 import { logger } from "../../lib/logger.ts";
 import type { AgentMessage, ContentPart, ToolCallRecord, ToolDefinition, UsageMetadata } from "../runtime/types.ts";
+import type { GeminiThinkingLevel } from "../thinking.ts";
 
 export interface GeminiTurnResult {
   text: string;
@@ -19,16 +20,14 @@ export interface GeminiTurnResult {
   stopReason?: string;
 }
 
-export type GeminiThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
-
 export interface GeminiClientOptions {
   apiKey: string;
   model: string;
   systemPrompt: string;
-  thinkingLevel: GeminiThinkingLevel;
+  defaultThinkingLevel: GeminiThinkingLevel;
 }
 
-function toSdkThinkingLevel(level: Exclude<GeminiThinkingLevel, "off">): ThinkingLevel {
+function toSdkThinkingLevel(level: GeminiThinkingLevel): ThinkingLevel {
   switch (level) {
     case "minimal":
       return ThinkingLevel.MINIMAL;
@@ -195,19 +194,20 @@ export class GeminiNativeClient {
   private readonly ai: GoogleGenAI;
   private readonly model: string;
   private readonly systemPrompt: string;
-  private readonly thinkingLevel: GeminiThinkingLevel;
+  private readonly defaultThinkingLevel: GeminiThinkingLevel;
 
   constructor(opts: GeminiClientOptions) {
     this.ai = new GoogleGenAI({ apiKey: opts.apiKey });
     this.model = opts.model;
     this.systemPrompt = opts.systemPrompt;
-    this.thinkingLevel = opts.thinkingLevel;
+    this.defaultThinkingLevel = opts.defaultThinkingLevel;
   }
 
   async generate(
     messages: AgentMessage[],
     tools: ToolDefinition[],
     signal?: AbortSignal,
+    thinkingLevel = this.defaultThinkingLevel,
   ): Promise<GeminiTurnResult> {
     let lastError: unknown;
 
@@ -219,8 +219,8 @@ export class GeminiNativeClient {
           config: {
             abortSignal: signal,
             systemInstruction: this.systemPrompt,
-            thinkingConfig: this.thinkingLevel === "off" ? undefined : {
-              thinkingLevel: toSdkThinkingLevel(this.thinkingLevel),
+            thinkingConfig: {
+              thinkingLevel: toSdkThinkingLevel(thinkingLevel),
             },
             tools: tools.length > 0
               ? [{ functionDeclarations: tools.map(toFunctionDeclaration) }]

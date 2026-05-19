@@ -19,6 +19,7 @@ import { GeminiNativeClient } from "./llm/gemini.ts";
 import { JsonlSessionStore } from "./runtime/session.ts";
 import type { AgentEvent, AgentEventCallback, AgentMessage, ContentPart, ToolDefinition } from "./runtime/types.ts";
 import { textPart } from "./runtime/types.ts";
+import { determineThinkingLevel, type GeminiThinkingLevel } from "./thinking.ts";
 
 const AGENT_PROMPT_TIMEOUT_MS = Number(Bun.env["AGENT_PROMPT_TIMEOUT_MS"] ?? 10 * 60_000);
 const MAX_TOOL_ROUNDS = Number(Bun.env["AGENT_MAX_TOOL_ROUNDS"] ?? 32);
@@ -33,6 +34,10 @@ export interface PromptResult {
   toolsUsed: string[];
 }
 
+export interface PromptOptions {
+  classificationText?: string;
+}
+
 function resolveDefaultModel(): string {
   const modelName = env.GEMINI_MODEL ?? "gemini-3.5-flash";
   logger.info("Using Gemini native model", { model: modelName });
@@ -45,6 +50,11 @@ function textFromMessage(message: AgentMessage | undefined): string {
     .filter((part): part is Extract<ContentPart, { type: "text" }> => part.type === "text")
     .map((part) => part.text)
     .join("\n");
+}
+
+function configuredThinkingLevel(): GeminiThinkingLevel | "dynamic" {
+  if (env.THINKING_LEVEL === "off") return "minimal";
+  return env.THINKING_LEVEL;
 }
 
 export class AgentRunner {
@@ -79,11 +89,12 @@ export class AgentRunner {
       getRunId: () => this.currentRunId,
     });
 
+    const thinkingConfig = configuredThinkingLevel();
     this.client = new GeminiNativeClient({
       apiKey: env.GEMINI_API_KEY,
       model: this.model,
       systemPrompt: buildStaticSystemPrompt(),
-      thinkingLevel: env.THINKING_LEVEL,
+      defaultThinkingLevel: thinkingConfig === "dynamic" ? "medium" : thinkingConfig,
     });
 
     if (this.messages.length > 0) {
@@ -104,11 +115,12 @@ export class AgentRunner {
     };
   }
 
-  async prompt(text: string, media?: ContentPart[]): Promise<PromptResult> {
+  async prompt(text: string, media?: ContentPart[], opts: PromptOptions = {}): Promise<PromptResult> {
     const promptText = this.prependMessageTimestamp(text);
     const toolsUsed: string[] = [];
     let timedOut = false;
     let promptError: string | undefined;
+    const thinkingLevel = this.resolveThinkingLevel(opts.classificationText ?? text, media);
 
     const runId = createRun({
       chatId: this.chatId,
@@ -118,6 +130,7 @@ export class AgentRunner {
         mediaCount: media?.length ?? 0,
         messageCount: this.messages.length,
         runtime: "gemini-native",
+        thinkingLevel,
       },
     });
     this.currentRunId = runId;
@@ -133,6 +146,7 @@ export class AgentRunner {
         media: media?.length ?? 0,
         existingMessages: this.messages.length,
         runtime: "gemini-native",
+        thinkingLevel,
       });
 
       markAgentPromptStarted(this.chatId, text.length);
@@ -173,7 +187,7 @@ export class AgentRunner {
         touchRun(runId, { chatId: this.chatId, eventType: "message_start", data: { round } });
         this.emit({ type: "message_start" });
 
-        const result = await this.client.generate(this.messages, this.tools, abortController.signal);
+        const result = await this.client.generate(this.messages, this.tools, abortController.signal, thinkingLevel);
         const assistantMessage: AgentMessage = {
           role: "assistant",
           content: result.text ? [textPart(result.text)] : [],
@@ -262,7 +276,7 @@ export class AgentRunner {
         this.messages.push(finalPrompt);
         this.sessionStore.append(finalPrompt);
 
-        const finalResult = await this.client.generate(this.messages, [], abortController.signal);
+        const finalResult = await this.client.generate(this.messages, [], abortController.signal, thinkingLevel);
         const forcedFinalMessage: AgentMessage = {
           role: "assistant",
           content: finalResult.text ? [textPart(finalResult.text)] : [textPart("I reached the tool limit before producing a final answer.")],
@@ -290,7 +304,7 @@ export class AgentRunner {
         chatId: this.chatId,
         status: timedOut ? "timeout" : "completed",
         response,
-        data: { toolsUsed, runtime: "gemini-native", hitToolRoundLimit },
+        data: { toolsUsed, runtime: "gemini-native", hitToolRoundLimit, thinkingLevel },
       });
 
       return { response, toolsUsed };
@@ -304,7 +318,7 @@ export class AgentRunner {
           chatId: this.chatId,
           status: "failed",
           error: err,
-          data: { reason: "context_overflow", runtime: "gemini-native" },
+          data: { reason: "context_overflow", runtime: "gemini-native", thinkingLevel },
         });
         return this.handleContextOverflow(text);
       }
@@ -313,7 +327,7 @@ export class AgentRunner {
         chatId: this.chatId,
         status: timedOut ? "timeout" : "failed",
         error: err,
-        data: { runtime: "gemini-native" },
+        data: { runtime: "gemini-native", thinkingLevel },
       });
       throw err;
     } finally {
@@ -384,6 +398,16 @@ export class AgentRunner {
       }
     }).catch((err) => {
       logger.warn("Proactive compaction on load failed", { chatId, error: errorMessage(err) });
+    });
+  }
+
+  private resolveThinkingLevel(classificationText: string, media?: ContentPart[]): GeminiThinkingLevel {
+    const configured = configuredThinkingLevel();
+    if (configured !== "dynamic") return configured;
+    return determineThinkingLevel({
+      text: classificationText,
+      media,
+      recentMessages: this.messages,
     });
   }
 

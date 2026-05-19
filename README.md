@@ -56,7 +56,7 @@ bun run start
 | `GEMINI_MODEL` | No | `gemini-3.5-flash` | Override Gemini model name |
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-| `THINKING_LEVEL` | No | `medium` | Gemini thinking effort: `minimal`, `low`, `medium`, or `high` |
+| `THINKING_LEVEL` | No | `dynamic` | `dynamic`, or static Gemini thinking effort: `minimal`, `low`, `medium`, `high` |
 
 ## Architecture
 

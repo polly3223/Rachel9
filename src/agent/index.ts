@@ -41,9 +41,14 @@ function getOrCreateRunner(chatId: number): AgentRunner {
  * Send a message to the agent for a specific chat and get a response.
  * Creates an AgentRunner lazily if one doesn't exist.
  */
-export async function agentPrompt(chatId: number, text: string, media?: ContentPart[]): Promise<PromptResult> {
+export async function agentPrompt(
+  chatId: number,
+  text: string,
+  media?: ContentPart[],
+  opts?: { classificationText?: string },
+): Promise<PromptResult> {
   const runner = getOrCreateRunner(chatId);
-  return runner.prompt(text, media);
+  return runner.prompt(text, media, opts);
 }
 
 /**

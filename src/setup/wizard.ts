@@ -73,7 +73,7 @@ async function main() {
     `SHARED_FOLDER_PATH=${sharedFolder}`,
     `GEMINI_API_KEY=${geminiKey}`,
     "GEMINI_MODEL=gemini-3.5-flash",
-    "THINKING_LEVEL=medium",
+    "THINKING_LEVEL=dynamic",
     "NODE_ENV=production",
     "LOG_LEVEL=info",
   ];
