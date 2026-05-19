@@ -29,7 +29,6 @@ function contentPartToGemini(part: ContentPart): Part {
     inlineData: {
       data: part.data,
       mimeType: part.mimeType,
-      displayName: part.fileName,
     },
   };
 }
