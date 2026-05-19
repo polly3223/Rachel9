@@ -138,7 +138,8 @@ export async function processAgentPrompt(
       void appendToDailyLog("user", logText ?? prompt);
 
       setAgentBusy(true);
-      const result = await agentPrompt(chatId, prompt, media);
+      const classificationText = prompt.includes("[ONBOARDING MODE]") ? prompt : (logText ?? prompt);
+      const result = await agentPrompt(chatId, prompt, media, { classificationText });
       setAgentBusy(false);
 
       stopTyping();

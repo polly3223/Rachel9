@@ -7,6 +7,7 @@ import { processAgentPrompt } from "./message.ts";
 import { logger } from "../../lib/logger.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { env } from "../../config/env.ts";
+import { canSendInlineToGemini } from "../lib/mime.ts";
 
 /**
  * Rachel Cloud is Gemini-only. Telegram still requires downloading files first;
@@ -93,7 +94,7 @@ export const handleDocument = withErrorHandling("file", async (ctx) => {
   const prompt = `${ts} [User sent a file saved at: ${localPath} (filename: ${fileName})]\n\n${caption}`;
   const mimeType = doc.mime_type ?? "application/octet-stream";
 
-  if (isNativeMultimodal()) {
+  if (isNativeMultimodal() && canSendInlineToGemini(mimeType)) {
     const mediaContent = await fileToMediaContent(localPath, mimeType);
     await processAgentPrompt(ctx, chatId, prompt, `[File: ${fileName}] ${caption}`, [mediaContent]);
   } else {

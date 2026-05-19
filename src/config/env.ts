@@ -48,7 +48,7 @@ export const envSchema = z.object({
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().optional(),
   // Agent behavior
-  THINKING_LEVEL: z.enum(["off", "minimal", "low", "medium", "high"]).default("medium"),
+  THINKING_LEVEL: z.enum(["dynamic", "off", "minimal", "low", "medium", "high"]).default("dynamic"),
   // STT (optional — only needed for voice/audio transcription)
   STT_PROVIDER: z.enum(["groq", "openai"]).default("groq"),
   GROQ_API_KEY: z.string().optional(),
