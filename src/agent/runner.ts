@@ -21,7 +21,7 @@ import type { AgentEvent, AgentEventCallback, AgentMessage, ContentPart, ToolDef
 import { textPart } from "./runtime/types.ts";
 
 const AGENT_PROMPT_TIMEOUT_MS = Number(Bun.env["AGENT_PROMPT_TIMEOUT_MS"] ?? 10 * 60_000);
-const MAX_TOOL_ROUNDS = Number(Bun.env["AGENT_MAX_TOOL_ROUNDS"] ?? 12);
+const MAX_TOOL_ROUNDS = Number(Bun.env["AGENT_MAX_TOOL_ROUNDS"] ?? 32);
 
 export interface AgentRunnerOptions {
   chatId: number;
@@ -166,6 +166,8 @@ export class AgentRunner {
 
       let lastAssistant: AgentMessage | undefined;
 
+      let hitToolRoundLimit = false;
+
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         touchRun(runId, { chatId: this.chatId, eventType: "message_start", data: { round } });
         this.emit({ type: "message_start" });
@@ -242,6 +244,37 @@ export class AgentRunner {
             data: { toolCallId: call.id, result: toolResult },
           });
         }
+
+        if (round === MAX_TOOL_ROUNDS - 1) {
+          hitToolRoundLimit = true;
+        }
+      }
+
+      if (hitToolRoundLimit) {
+        const finalPrompt: AgentMessage = {
+          role: "user",
+          content: [textPart(
+            "The tool round budget has been reached. Do not call more tools. Give the user the best final answer from the work completed so far. If you created files, mention their paths. If you started a server or tunnel but did not retrieve the URL, say that plainly.",
+          )],
+          timestamp: Date.now(),
+        };
+        this.messages.push(finalPrompt);
+        this.sessionStore.append(finalPrompt);
+
+        const finalResult = await this.client.generate(this.messages, [], abortController.signal);
+        const forcedFinalMessage: AgentMessage = {
+          role: "assistant",
+          content: finalResult.text ? [textPart(finalResult.text)] : [textPart("I reached the tool limit before producing a final answer.")],
+          timestamp: Date.now(),
+          model: finalResult.modelVersion ?? this.model,
+          provider: "google",
+          usage: finalResult.usage,
+          stopReason: finalResult.stopReason,
+        };
+        this.messages.push(forcedFinalMessage);
+        this.sessionStore.append(forcedFinalMessage);
+        this.trackUsage(forcedFinalMessage);
+        lastAssistant = forcedFinalMessage;
       }
 
       const response = timedOut
@@ -383,4 +416,3 @@ export class AgentRunner {
 }
 
 export type { AgentEventCallback };
-
