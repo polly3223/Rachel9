@@ -1,3 +1,5 @@
+export const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
+
 /**
  * Central constants file.
  * All tunable values in one place — easy to adjust per deployment.

@@ -9,6 +9,7 @@
 
 import * as p from "@clack/prompts";
 import { existsSync } from "node:fs";
+import { DEFAULT_GEMINI_MODEL } from "../config/constants.ts";
 import { installSystemdService } from "./install.ts";
 
 async function main() {
@@ -72,7 +73,7 @@ async function main() {
     `OWNER_TELEGRAM_USER_ID=${ownerId}`,
     `SHARED_FOLDER_PATH=${sharedFolder}`,
     `GEMINI_API_KEY=${geminiKey}`,
-    "GEMINI_MODEL=gemini-3.5-flash",
+    `GEMINI_MODEL=${DEFAULT_GEMINI_MODEL}`,
     "THINKING_LEVEL=dynamic",
     "NODE_ENV=production",
     "LOG_LEVEL=info",

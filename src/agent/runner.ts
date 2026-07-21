@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_GEMINI_MODEL } from "../config/constants.ts";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import { errorMessage } from "../lib/errors.ts";
@@ -39,7 +40,7 @@ export interface PromptOptions {
 }
 
 function resolveDefaultModel(): string {
-  const modelName = env.GEMINI_MODEL ?? "gemini-3.5-flash";
+  const modelName = env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL;
   logger.info("Using Gemini native model", { model: modelName });
   return modelName;
 }
