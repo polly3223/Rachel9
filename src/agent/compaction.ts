@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { CONSTANTS } from "../config/constants.ts";
+import { CONSTANTS, DEFAULT_GEMINI_MODEL } from "../config/constants.ts";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import type { AgentMessage, ContentPart } from "./runtime/types.ts";
@@ -64,7 +64,7 @@ Summary:`;
   try {
     const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
     const response = await ai.models.generateContent({
-      model: env.GEMINI_MODEL ?? "gemini-3.5-flash",
+      model: env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
       contents: prompt,
       config: {
         abortSignal: signal,
@@ -127,4 +127,3 @@ export async function compactMessages(messages: AgentMessage[], signal?: AbortSi
 
   return compacted;
 }
-

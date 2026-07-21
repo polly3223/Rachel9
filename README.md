@@ -53,7 +53,7 @@ bun run start
 | `OWNER_TELEGRAM_USER_ID` | Yes | — | Your Telegram user ID |
 | `SHARED_FOLDER_PATH` | Yes | — | Path for persistent data (memory, database, sessions) |
 | `GEMINI_API_KEY` | Yes | — | Google AI Studio API key |
-| `GEMINI_MODEL` | No | `gemini-3.5-flash` | Override Gemini model name |
+| `GEMINI_MODEL` | No | `gemini-3.6-flash` | Override Gemini model name |
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
 | `THINKING_LEVEL` | No | `dynamic` | `dynamic`, or static Gemini thinking effort: `minimal`, `low`, `medium`, `high` |
