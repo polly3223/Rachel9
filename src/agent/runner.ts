@@ -13,10 +13,17 @@ import {
 } from "../lib/runtime-state.ts";
 import { createRun, finishRun, touchRun } from "../lib/agent-runtime-store.ts";
 import { killManagedProcessesForChat, killManagedProcessesForScope } from "../lib/process-registry.ts";
-import { buildDynamicPromptContext, buildStaticSystemPrompt } from "./system-prompt.ts";
+import {
+  buildDynamicPromptContext,
+  buildFallbackSystemPrompt,
+  buildStaticSystemPrompt,
+} from "./system-prompt.ts";
 import { createAgentTools, type ToolDependencies } from "./tools/index.ts";
 import { compactMessages } from "./compaction.ts";
 import { GeminiNativeClient } from "./llm/gemini.ts";
+import { FailoverClient } from "./llm/failover.ts";
+import { GroqFallbackClient } from "./llm/groq.ts";
+import type { AgentLlmClient } from "./llm/types.ts";
 import { JsonlSessionStore } from "./runtime/session.ts";
 import type { AgentEvent, AgentEventCallback, AgentMessage, ContentPart, ToolDefinition } from "./runtime/types.ts";
 import { textPart } from "./runtime/types.ts";
@@ -24,6 +31,7 @@ import { determineThinkingLevel, type GeminiThinkingLevel } from "./thinking.ts"
 
 const AGENT_PROMPT_TIMEOUT_MS = Number(Bun.env["AGENT_PROMPT_TIMEOUT_MS"] ?? 10 * 60_000);
 const MAX_TOOL_ROUNDS = Number(Bun.env["AGENT_MAX_TOOL_ROUNDS"] ?? 32);
+const DEFAULT_GROQ_FALLBACK_MODEL = "openai/gpt-oss-120b";
 
 export interface AgentRunnerOptions {
   chatId: number;
@@ -62,7 +70,7 @@ export class AgentRunner {
   readonly chatId: number;
   private readonly tools: ToolDefinition[];
   private readonly model: string;
-  private readonly client: GeminiNativeClient;
+  private readonly client: AgentLlmClient;
   private readonly sessionStore: JsonlSessionStore;
   private readonly eventCallbacks: AgentEventCallback[] = [];
   private messages: AgentMessage[] = [];
@@ -71,8 +79,8 @@ export class AgentRunner {
   private streaming = false;
 
   constructor(opts: AgentRunnerOptions) {
-    if (!env.GEMINI_API_KEY) {
-      throw new Error("GEMINI_API_KEY is required for Rachel9 Gemini-native runtime");
+    if (!env.GEMINI_API_KEY && !env.GROQ_API_KEY) {
+      throw new Error("GEMINI_API_KEY or GROQ_API_KEY is required for the Rachel9 runtime");
     }
 
     this.chatId = opts.chatId;
@@ -91,12 +99,27 @@ export class AgentRunner {
     });
 
     const thinkingConfig = configuredThinkingLevel();
-    this.client = new GeminiNativeClient({
-      apiKey: env.GEMINI_API_KEY,
-      model: this.model,
-      systemPrompt: buildStaticSystemPrompt(),
-      defaultThinkingLevel: thinkingConfig === "dynamic" ? "medium" : thinkingConfig,
-    });
+    const defaultThinkingLevel = thinkingConfig === "dynamic" ? "medium" : thinkingConfig;
+    const systemPrompt = buildStaticSystemPrompt();
+    const geminiClient = env.GEMINI_API_KEY
+      ? new GeminiNativeClient({
+          apiKey: env.GEMINI_API_KEY,
+          model: this.model,
+          systemPrompt,
+          defaultThinkingLevel,
+        })
+      : null;
+    const groqClient = env.GROQ_API_KEY
+      ? new GroqFallbackClient({
+          apiKey: env.GROQ_API_KEY,
+          model: env.GROQ_LLM_MODEL ?? DEFAULT_GROQ_FALLBACK_MODEL,
+          systemPrompt: buildFallbackSystemPrompt(),
+        })
+      : null;
+
+    this.client = geminiClient && groqClient
+      ? new FailoverClient(geminiClient, groqClient)
+      : (geminiClient ?? groqClient)!;
 
     if (this.messages.length > 0) {
       logger.info("Loaded session from disk", { chatId: opts.chatId, messageCount: this.messages.length });
@@ -195,7 +218,7 @@ export class AgentRunner {
           content: result.text ? [textPart(result.text)] : [],
           timestamp: Date.now(),
           model: result.modelVersion ?? this.model,
-          provider: "google",
+          provider: result.provider,
           usage: result.usage,
           stopReason: result.stopReason,
           toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
@@ -284,7 +307,7 @@ export class AgentRunner {
           content: finalResult.text ? [textPart(finalResult.text)] : [textPart("I reached the tool limit before producing a final answer.")],
           timestamp: Date.now(),
           model: finalResult.modelVersion ?? this.model,
-          provider: "google",
+          provider: finalResult.provider,
           usage: finalResult.usage,
           stopReason: finalResult.stopReason,
         };
