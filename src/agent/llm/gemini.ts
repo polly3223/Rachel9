@@ -11,7 +11,14 @@ import {
 import { logger } from "../../lib/logger.ts";
 import type { AgentMessage, ContentPart, ToolCallRecord, ToolDefinition, UsageMetadata } from "../runtime/types.ts";
 import type { GeminiThinkingLevel } from "../thinking.ts";
-import type { AgentLlmClient, LlmTurnResult } from "./types.ts";
+
+export interface GeminiTurnResult {
+  text: string;
+  toolCalls: ToolCallRecord[];
+  usage: UsageMetadata;
+  modelVersion?: string;
+  stopReason?: string;
+}
 
 export interface GeminiClientOptions {
   apiKey: string;
@@ -149,14 +156,7 @@ function errorText(error: unknown): string {
   return String(error);
 }
 
-export function isPermanentGeminiQuotaError(error: unknown): boolean {
-  const lower = errorText(error).toLowerCase();
-  return lower.includes("monthly spending cap") ||
-    lower.includes("billing account") ||
-    lower.includes("billing details");
-}
-
-export function isTransientGeminiError(error: unknown): boolean {
+function isTransientGeminiError(error: unknown): boolean {
   const lower = errorText(error).toLowerCase();
   return [
     "\"code\":429",
@@ -190,7 +190,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export class GeminiNativeClient implements AgentLlmClient {
+export class GeminiNativeClient {
   private readonly ai: GoogleGenAI;
   private readonly model: string;
   private readonly systemPrompt: string;
@@ -208,7 +208,7 @@ export class GeminiNativeClient implements AgentLlmClient {
     tools: ToolDefinition[],
     signal?: AbortSignal,
     thinkingLevel = this.defaultThinkingLevel,
-  ): Promise<LlmTurnResult> {
+  ): Promise<GeminiTurnResult> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= TRANSIENT_RETRY_DELAYS_MS.length; attempt++) {
@@ -235,18 +235,12 @@ export class GeminiNativeClient implements AgentLlmClient {
           text: extractText(response),
           toolCalls: extractToolCalls(response),
           usage: toUsage(response),
-          provider: "google",
           modelVersion: response.modelVersion,
           stopReason: response.candidates?.[0]?.finishReason,
         };
       } catch (err) {
         lastError = err;
-        if (
-          isAbortError(err, signal) ||
-          isPermanentGeminiQuotaError(err) ||
-          !isTransientGeminiError(err) ||
-          attempt >= TRANSIENT_RETRY_DELAYS_MS.length
-        ) {
+        if (isAbortError(err, signal) || !isTransientGeminiError(err) || attempt >= TRANSIENT_RETRY_DELAYS_MS.length) {
           throw err;
         }
 
