@@ -20,7 +20,11 @@ import { GeminiNativeClient } from "./llm/gemini.ts";
 import { JsonlSessionStore } from "./runtime/session.ts";
 import type { AgentEvent, AgentEventCallback, AgentMessage, ContentPart, ToolDefinition } from "./runtime/types.ts";
 import { textPart } from "./runtime/types.ts";
-import { determineThinkingLevel, type GeminiThinkingLevel } from "./thinking.ts";
+import {
+  determineThinkingLevel,
+  normalizeThinkingLevelForModel,
+  type GeminiThinkingLevel,
+} from "./thinking.ts";
 
 const AGENT_PROMPT_TIMEOUT_MS = Number(Bun.env["AGENT_PROMPT_TIMEOUT_MS"] ?? 10 * 60_000);
 const MAX_TOOL_ROUNDS = Number(Bun.env["AGENT_MAX_TOOL_ROUNDS"] ?? 32);
@@ -406,12 +410,14 @@ export class AgentRunner {
 
   private resolveThinkingLevel(classificationText: string, media?: ContentPart[]): GeminiThinkingLevel {
     const configured = configuredThinkingLevel();
-    if (configured !== "dynamic") return configured;
-    return determineThinkingLevel({
-      text: classificationText,
-      media,
-      recentMessages: this.messages,
-    });
+    const level = configured !== "dynamic"
+      ? configured
+      : determineThinkingLevel({
+        text: classificationText,
+        media,
+        recentMessages: this.messages,
+      });
+    return normalizeThinkingLevelForModel(this.model, level);
   }
 
   private isContextOverflow(error: string): boolean {

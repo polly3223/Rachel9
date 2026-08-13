@@ -2,6 +2,14 @@ import type { AgentMessage, ContentPart } from "./runtime/types.ts";
 
 export type GeminiThinkingLevel = "minimal" | "low" | "medium" | "high";
 
+export function normalizeThinkingLevelForModel(
+  model: string,
+  level: GeminiThinkingLevel,
+): GeminiThinkingLevel {
+  if (model.toLowerCase().startsWith("gemini-3.7") && level === "minimal") return "low";
+  return level;
+}
+
 export interface ThinkingClassificationInput {
   text: string;
   media?: ContentPart[];
