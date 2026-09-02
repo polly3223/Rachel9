@@ -44,13 +44,16 @@ describe("determineThinkingLevel", () => {
 });
 
 describe("normalizeThinkingLevelForModel", () => {
-  test("raises minimal to low for Gemini 3.7 models", () => {
+  test("raises minimal to low for Gemini models that do not support it", () => {
     expect(normalizeThinkingLevelForModel("gemini-3.7-flash", "minimal")).toBe("low");
     expect(normalizeThinkingLevelForModel("gemini-3.7-flash-preview", "minimal")).toBe("low");
+    expect(normalizeThinkingLevelForModel("gemini-3.8-flash", "minimal")).toBe("low");
+    expect(normalizeThinkingLevelForModel("gemini-3.8-flash-preview", "minimal")).toBe("low");
   });
 
   test("preserves supported levels and older model behavior", () => {
     expect(normalizeThinkingLevelForModel("gemini-3.7-flash", "medium")).toBe("medium");
+    expect(normalizeThinkingLevelForModel("gemini-3.8-flash", "high")).toBe("high");
     expect(normalizeThinkingLevelForModel("gemini-3.6-flash", "minimal")).toBe("minimal");
   });
 });

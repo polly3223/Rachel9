@@ -6,7 +6,11 @@ export function normalizeThinkingLevelForModel(
   model: string,
   level: GeminiThinkingLevel,
 ): GeminiThinkingLevel {
-  if (model.toLowerCase().startsWith("gemini-3.7") && level === "minimal") return "low";
+  const normalizedModel = model.toLowerCase();
+  const requiresLowMinimum =
+    normalizedModel.startsWith("gemini-3.7") ||
+    normalizedModel.startsWith("gemini-3.8");
+  if (requiresLowMinimum && level === "minimal") return "low";
   return level;
 }
 
