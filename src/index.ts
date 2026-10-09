@@ -12,6 +12,7 @@ import { setTelegramSender, setAgentExecutor, startTaskPoller, shutdownTasks } f
 import { getRuntimeHealth } from "./lib/runtime-state.ts";
 import { recoverAbandonedRuntimeState } from "./lib/agent-runtime-store.ts";
 import { killAllManagedProcesses } from "./lib/process-registry.ts";
+import { sendFormattedChunks } from "./telegram/lib/format.ts";
 
 // ---------------------------------------------------------------------------
 // SAFETY GUARD: Prevent polling mode inside Docker containers.
@@ -85,7 +86,7 @@ initAgentSystem({
 // Initialize task scheduler
 // ---------------------------------------------------------------------------
 setTelegramSender(async (text: string) => {
-  await bot.api.sendMessage(env.OWNER_TELEGRAM_USER_ID, text);
+  await sendFormattedChunks(bot.api, env.OWNER_TELEGRAM_USER_ID, text);
 });
 
 setAgentExecutor(async (prompt: string) => {

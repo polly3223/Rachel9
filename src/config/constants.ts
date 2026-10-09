@@ -18,16 +18,14 @@ export const CONSTANTS = {
   // ── Streaming / Telegram ────────────────────────────────────────────
   /** Minimum ms between Telegram draft updates during streaming. */
   STREAM_THROTTLE_MS: 300,
-  /** Telegram single-message character limit. */
-  TELEGRAM_MAX_MESSAGE_LENGTH: 4096,
+  /** Telegram native rich-message character limit. */
+  TELEGRAM_MAX_MESSAGE_LENGTH: 32768,
   /** Truncation point for streaming edits (leave room for suffix). */
   STREAM_EDIT_TRUNCATE: 4000,
 
   // ── Task Scheduler ──────────────────────────────────────────────────
   /** How often the task scheduler polls for due tasks (ms). */
   TASK_POLL_INTERVAL_MS: 30_000,
-  /** Max agent result length before truncation in reminder messages. */
-  TASK_RESULT_TRUNCATE: 4000,
 
   // ── Crash Guard ─────────────────────────────────────────────────────
   /** Minimum uptime (ms) before a crash triggers immediate re-throw. */

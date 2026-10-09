@@ -8,7 +8,7 @@ Rachel can read and create documents, search the web, write and run code, schedu
 
 ## Features
 
-- **Telegram-native** — chat naturally, send voice messages, photos, documents
+- **Telegram-native** — chat naturally, send voice messages, photos, documents; replies and scheduled results support native rich Markdown tables, headings, quotes, code and formulas
 - **Persistent memory** — Rachel remembers your preferences, past conversations, and important facts
 - **Built-in tools** — file I/O, bash, grep, web search, web fetch, Telegram file sending, and more
 - **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, and more
@@ -126,7 +126,7 @@ MAX_CONTEXT_TOKENS: 500_000      // Hard context limit
 COMPACTION_THRESHOLD: 0.70        // Trigger compaction at 70%
 COMPACTION_KEEP_RECENT_TURNS: 10  // Always keep last 10 exchanges
 STREAM_THROTTLE_MS: 300           // Legacy throttle constant
-TELEGRAM_MAX_MESSAGE_LENGTH: 4096 // Telegram's hard limit
+TELEGRAM_MAX_MESSAGE_LENGTH: 32768 // Native rich-message limit
 TASK_POLL_INTERVAL_MS: 30_000     // Task scheduler poll interval
 ```
 

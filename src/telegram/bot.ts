@@ -78,6 +78,7 @@ bot.command("stop", async (ctx) => {
 
 // Message handlers
 bot.on("message:text", handleTextMessage);
+bot.on("message:rich_message", handleTextMessage);
 bot.on("message:photo", handlePhoto);
 bot.on("message:document", handleDocument);
 bot.on("message:voice", handleVoice);

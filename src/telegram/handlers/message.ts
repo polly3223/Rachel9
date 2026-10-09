@@ -4,7 +4,7 @@ import { agentPrompt } from "../../agent/index.ts";
 import { setAgentBusy } from "../../lib/tasks.ts";
 import type { ContentPart } from "../../agent/runtime/types.ts";
 import { timestamp } from "../lib/timestamp.ts";
-import { sendFormattedMessage, splitMessage } from "../lib/format.ts";
+import { messageText, sendFormattedChunks } from "../lib/format.ts";
 import { enqueueForChat } from "../lib/queue.ts";
 import { logger } from "../../lib/logger.ts";
 import { errorMessage } from "../../lib/errors.ts";
@@ -101,11 +101,13 @@ function isOnboarded(): boolean {
  * Handle incoming text messages.
  */
 export async function handleTextMessage(ctx: BotContext): Promise<void> {
-  const text = ctx.message?.text;
+  const text = messageText(ctx.message);
   const chatId = ctx.chat?.id;
   if (!text || !chatId) return;
 
   let timestampedText = `${timestamp()} ${text}`;
+  const quoted = messageText(ctx.message?.reply_to_message);
+  if (quoted) timestampedText += `\n\nQuoted message (context): ${quoted}`;
 
   // If not onboarded yet, prepend onboarding instructions
   if (!isOnboarded()) {
@@ -156,10 +158,7 @@ export async function processAgentPrompt(
         return;
       }
 
-      const parts = splitMessage(finalText);
-      for (const part of parts) {
-        await sendFormattedMessage(ctx.api, chatId, part);
-      }
+      await sendFormattedChunks(ctx.api, chatId, finalText);
     } catch (err) {
       setAgentBusy(false);
       stopTyping();

@@ -168,9 +168,7 @@ async function executeTask(task: TaskRow): Promise<void> {
       try {
         const result = await agentExecutor(prompt);
         if (telegramSender && result) {
-          // Truncate if too long for Telegram
-          const truncated = result.length > CONSTANTS.TASK_RESULT_TRUNCATE ? result.slice(0, CONSTANTS.TASK_RESULT_TRUNCATE) + "\n\n...(truncated)" : result;
-          await telegramSender(truncated);
+          await telegramSender(result);
         }
       } catch (err) {
         logger.error("Agent task failed", { name: task.name, error: errorMessage(err) });

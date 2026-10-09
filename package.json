@@ -6,6 +6,8 @@
     "dev": "bun --watch run src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
+    "build": "bun build src/index.ts --target bun --outdir dist",
+    "check": "bun run typecheck && bun test && bun run build",
     "setup": "bun run src/setup/wizard.ts"
   },
   "dependencies": {
@@ -14,7 +16,7 @@
     "@grammyjs/auto-chat-action": "^0.1.1",
     "@sinclair/typebox": "^0.34.48",
     "baileys": "^7.0.0-rc.9",
-    "grammy": "^1.40.0",
+    "grammy": "1.46.0",
     "gray-matter": "^4.0.3",
     "qrcode": "^1.5.4",
     "zod": "^4.3.6"
