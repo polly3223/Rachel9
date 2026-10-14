@@ -1,4 +1,4 @@
-export const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+export const DEFAULT_PREM_MODEL = "deepseek-v4.1-flash";
 
 /**
  * Central constants file.

@@ -1,5 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
-import { CONSTANTS, DEFAULT_GEMINI_MODEL } from "../config/constants.ts";
+import { PremClient } from "./llm/prem.ts";
+import { CONSTANTS, DEFAULT_PREM_MODEL } from "../config/constants.ts";
 import { env } from "../config/env.ts";
 import { logger } from "../lib/logger.ts";
 import type { AgentMessage, ContentPart } from "./runtime/types.ts";
@@ -50,7 +50,7 @@ async function summarizeMessages(messages: AgentMessage[], signal?: AbortSignal)
   const conversationText = messagesToText(messages);
   if (conversationText.length < 500) return conversationText;
 
-  if (!env.GEMINI_API_KEY) {
+  if (!env.PREM_API_KEY) {
     return conversationText.slice(0, 2000) + "\n\n[...older conversation truncated]";
   }
 
@@ -62,18 +62,17 @@ ${conversationText}
 Summary:`;
 
   try {
-    const ai = new GoogleGenAI({ apiKey: env.GEMINI_API_KEY });
-    const response = await ai.models.generateContent({
-      model: env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        abortSignal: signal,
-        systemInstruction: "You are a conversation summarizer. Produce concise, factual summaries.",
-      },
+    const client = new PremClient({
+      apiKey: env.PREM_API_KEY,
+      model: env.PREM_MODEL ?? DEFAULT_PREM_MODEL,
+      systemPrompt: "You are a conversation summarizer. Produce concise, factual summaries.",
+      defaultThinkingLevel: "low",
     });
+    const response = await client.generate([{ role: "user", content: [{ type: "text", text: prompt }], timestamp: Date.now() }], [], signal);
 
-    return response.text?.trim() || conversationText.slice(0, 2000);
+    return response.text.trim() || conversationText.slice(0, 2000);
   } catch (err) {
+    signal?.throwIfAborted();
     logger.warn("Compaction summary failed, using truncation fallback", { error: String(err) });
     return conversationText.slice(0, 2000) + "\n\n[...older conversation truncated]";
   }

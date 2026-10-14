@@ -32,6 +32,7 @@ export type AgentMessage =
       usage?: UsageMetadata;
       stopReason?: string;
       errorMessage?: string;
+      reasoningContent?: string;
       toolCalls?: ToolCallRecord[];
     }
   | {

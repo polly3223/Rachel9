@@ -1,3 +1,4 @@
+import { DEFAULT_PREM_MODEL } from "./config/constants.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { bot } from "./telegram/bot.ts";
@@ -163,7 +164,7 @@ if (isWebhookMode) {
       // Health check endpoint
       if (req.method === "GET" && url.pathname === "/health") {
         const health = getRuntimeHealth();
-        return new Response(JSON.stringify(health), {
+        return new Response(JSON.stringify({ ...health, inference: { provider: "prem-zdr", model: env.PREM_MODEL ?? DEFAULT_PREM_MODEL, visionModel: "qwen38-flash-next", speechProvider: env.STT_PROVIDER } }), {
           status: health.status === "ok" ? 200 : 503,
           headers: { "Content-Type": "application/json" },
         });

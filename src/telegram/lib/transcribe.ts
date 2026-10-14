@@ -61,11 +61,11 @@ export async function transcribeAudio(filePath: string): Promise<string> {
     method: "POST",
     headers: { Authorization: `Bearer ${config.apiKey}` },
     body: formData,
+    signal: AbortSignal.timeout(120_000),
   });
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`STT API error (${response.status}): ${errorText}`);
+    throw new Error(`STT API error (${response.status})`);
   }
 
   const result = (await response.json()) as { text: string };

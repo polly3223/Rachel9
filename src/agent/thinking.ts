@@ -1,18 +1,6 @@
 import type { AgentMessage, ContentPart } from "./runtime/types.ts";
 
-export type GeminiThinkingLevel = "minimal" | "low" | "medium" | "high";
-
-export function normalizeThinkingLevelForModel(
-  model: string,
-  level: GeminiThinkingLevel,
-): GeminiThinkingLevel {
-  const normalizedModel = model.toLowerCase();
-  const requiresLowMinimum =
-    normalizedModel.startsWith("gemini-3.7") ||
-    normalizedModel.startsWith("gemini-3.8");
-  if (requiresLowMinimum && level === "minimal") return "low";
-  return level;
-}
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 
 export interface ThinkingClassificationInput {
   text: string;
@@ -90,7 +78,7 @@ function recentContextLooksComplex(messages: AgentMessage[] | undefined): boolea
     hasActionRoot(recentText);
 }
 
-export function determineThinkingLevel(input: ThinkingClassificationInput): GeminiThinkingLevel {
+export function determineThinkingLevel(input: ThinkingClassificationInput): ThinkingLevel {
   const clean = normalize(input.text);
   const words = wordCount(clean);
   const hasMedia = Boolean(input.media?.length);

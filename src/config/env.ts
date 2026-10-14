@@ -45,8 +45,8 @@ export const envSchema = z.object({
     .default("production"),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
   ZAI_API_KEY: z.string().optional(),
-  GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().optional(),
+  PREM_API_KEY: z.string().min(1, "Prem API key is required"),
+  PREM_MODEL: z.string().optional(),
   // Agent behavior
   THINKING_LEVEL: z.enum(["dynamic", "off", "minimal", "low", "medium", "high"]).default("dynamic"),
   // STT (optional — only needed for voice/audio transcription)
@@ -96,11 +96,12 @@ process.env["TEMP"] = TEMP_DIR;
 
 // ---------------------------------------------------------------------------
 // Security: Remove sensitive env vars from process.env so the agent's bash
-// tool cannot leak them (e.g., `printenv GEMINI_API_KEY`).
+// tool cannot leak them (e.g., `printenv PREM_API_KEY`).
 // The values are already captured in the `env` object above and passed to
 // the model provider via getApiKey() — they don't need to stay in process.env.
 // ---------------------------------------------------------------------------
 const SENSITIVE_KEYS = [
+  "PREM_API_KEY",
   "GEMINI_API_KEY",
   "ZAI_API_KEY",
   "GROQ_API_KEY",

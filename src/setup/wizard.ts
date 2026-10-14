@@ -9,7 +9,7 @@
 
 import * as p from "@clack/prompts";
 import { existsSync } from "node:fs";
-import { DEFAULT_GEMINI_MODEL } from "../config/constants.ts";
+import { DEFAULT_PREM_MODEL } from "../config/constants.ts";
 import { installSystemdService } from "./install.ts";
 
 async function main() {
@@ -57,23 +57,23 @@ async function main() {
   });
   if (p.isCancel(sharedFolder)) return cancel();
 
-  // 4. Gemini API key
-  const geminiKey = await p.text({
-    message: "Google AI Studio Gemini API key:",
-    placeholder: "AIza...",
+  // 4. Prem API key
+  const premKey = await p.text({
+    message: "Prem ZDR API key:",
+    placeholder: "sk_live_...",
     validate: (v) => {
-      if (!v || v.length < 10) return "Required — get from Google AI Studio";
+      if (!v || v.length < 10) return "Required — get from dashboard.prem.io";
     },
   });
-  if (p.isCancel(geminiKey)) return cancel();
+  if (p.isCancel(premKey)) return cancel();
 
   // Build .env content
   const lines: string[] = [
     `TELEGRAM_BOT_TOKEN=${botToken}`,
     `OWNER_TELEGRAM_USER_ID=${ownerId}`,
     `SHARED_FOLDER_PATH=${sharedFolder}`,
-    `GEMINI_API_KEY=${geminiKey}`,
-    `GEMINI_MODEL=${DEFAULT_GEMINI_MODEL}`,
+    `PREM_API_KEY=${premKey}`,
+    `PREM_MODEL=${DEFAULT_PREM_MODEL}`,
     "THINKING_LEVEL=dynamic",
     "NODE_ENV=production",
     "LOG_LEVEL=info",

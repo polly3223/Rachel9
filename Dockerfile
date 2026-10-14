@@ -1,6 +1,6 @@
 # Rachel9 — Multi-stage Dockerfile
 # Much simpler than Rachel8: no Claude CLI, no OAuth tokens, no credential sync.
-# Just Bun + the native Gemini SDK runtime.
+# Just Bun + the Prem ZDR runtime.
 
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — install dependencies
@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     ffmpeg \
+    poppler-utils \
     python3 \
     python3-pip \
     python3-venv \

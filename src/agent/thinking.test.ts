@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { determineThinkingLevel, normalizeThinkingLevelForModel } from "./thinking.ts";
+import { determineThinkingLevel } from "./thinking.ts";
 import { textPart, type AgentMessage } from "./runtime/types.ts";
 
 function assistant(text: string): AgentMessage {
@@ -40,20 +40,5 @@ describe("determineThinkingLevel", () => {
       text: "what is in this image?",
       media: [{ type: "media", data: "abc", mimeType: "image/jpeg" }],
     })).toBe("medium");
-  });
-});
-
-describe("normalizeThinkingLevelForModel", () => {
-  test("raises minimal to low for Gemini models that do not support it", () => {
-    expect(normalizeThinkingLevelForModel("gemini-3.7-flash", "minimal")).toBe("low");
-    expect(normalizeThinkingLevelForModel("gemini-3.7-flash-preview", "minimal")).toBe("low");
-    expect(normalizeThinkingLevelForModel("gemini-3.8-flash", "minimal")).toBe("low");
-    expect(normalizeThinkingLevelForModel("gemini-3.8-flash-preview", "minimal")).toBe("low");
-  });
-
-  test("preserves supported levels and older model behavior", () => {
-    expect(normalizeThinkingLevelForModel("gemini-3.7-flash", "medium")).toBe("medium");
-    expect(normalizeThinkingLevelForModel("gemini-3.8-flash", "high")).toBe("high");
-    expect(normalizeThinkingLevelForModel("gemini-3.6-flash", "minimal")).toBe("minimal");
   });
 });

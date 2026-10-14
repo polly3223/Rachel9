@@ -1,247 +1,73 @@
 import type { BotContext } from "../bot.ts";
-import type { ContentPart } from "../../agent/runtime/types.ts";
 import { downloadTelegramFile } from "../lib/file.ts";
-import { transcribeAudio } from "../lib/transcribe.ts";
+import { prepareAttachment } from "../lib/attachment.ts";
 import { timestamp } from "../lib/timestamp.ts";
 import { processAgentPrompt } from "./message.ts";
 import { logger } from "../../lib/logger.ts";
 import { errorMessage } from "../../lib/errors.ts";
-import { env } from "../../config/env.ts";
-import { canSendInlineToGemini } from "../lib/mime.ts";
 
-/**
- * Rachel Cloud is Gemini-only. Telegram still requires downloading files first;
- * the agent receives model-ready inline media plus the saved file path.
- */
-function isNativeMultimodal(): boolean {
-  return !!env.GEMINI_API_KEY;
-}
-
-/**
- * Read a local file and return as base64 media content for Gemini.
- */
-async function fileToMediaContent(filePath: string, mimeType: string): Promise<ContentPart> {
-  const file = Bun.file(filePath);
-  const buffer = await file.arrayBuffer();
-  const base64 = Buffer.from(buffer).toString("base64");
-  return { type: "media", data: base64, mimeType, fileName: filePath.split("/").pop() };
-}
-
-// ---------------------------------------------------------------------------
-// Error handling wrapper
-// ---------------------------------------------------------------------------
-
-function withErrorHandling(
-  mediaType: string,
-  handler: (ctx: BotContext) => Promise<void>,
-): (ctx: BotContext) => Promise<void> {
-  return async (ctx: BotContext): Promise<void> => {
+function withErrorHandling(mediaType: string, handler: (ctx: BotContext) => Promise<void>): (ctx: BotContext) => Promise<void> {
+  return async (ctx) => {
     try {
       await handler(ctx);
     } catch (err) {
       logger.error(`Failed to handle ${mediaType}`, { error: errorMessage(err) });
-      try {
-        await ctx.reply(`Sorry, I couldn't process that ${mediaType}. Please try again.`);
-      } catch {
-        // Can't even send error — give up
-      }
+      try { await ctx.reply(`Sorry, I couldn't process that ${mediaType}. Please try again.`); } catch { /* Telegram may be unavailable. */ }
     }
   };
 }
 
-// ---------------------------------------------------------------------------
-// Photo handler (TG-02)
-// ---------------------------------------------------------------------------
+async function processFile(ctx: BotContext, fileId: string, fileName: string, mimeType: string, caption: string, label: string): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (!chatId) return;
+  const path = await downloadTelegramFile(fileId, fileName);
+  const attachment = await prepareAttachment(path, mimeType);
+  const prompt = `${timestamp()} [User sent ${label}; saved at: ${path}]\n\n${caption}${attachment.text ? `\n\n${attachment.text}` : ""}`;
+  await processAgentPrompt(ctx, chatId, prompt, `[${label}] ${caption}`, attachment.media);
+}
 
 export const handlePhoto = withErrorHandling("image", async (ctx) => {
-  const photos = ctx.message?.photo;
-  const chatId = ctx.chat?.id;
-  if (!photos?.length || !chatId) return;
-
-  // Telegram sends multiple resolutions — take highest quality (last)
-  const photo = photos[photos.length - 1]!;
-  const localPath = await downloadTelegramFile(photo.file_id, "photo.jpg");
-
-  const caption = ctx.message?.caption ?? "I sent you an image. What do you see?";
-  const ts = timestamp();
-
-  if (isNativeMultimodal()) {
-    // Send image inline as base64 — Gemini processes it natively
-    const imageContent = await fileToMediaContent(localPath, "image/jpeg");
-    const prompt = `${ts} [User sent an image — also saved at: ${localPath}]\n\n${caption}`;
-    await processAgentPrompt(ctx, chatId, prompt, `[Photo] ${caption}`, [imageContent]);
-  } else {
-    // Fallback: just reference the file path (agent reads it via tools)
-    const prompt = `${ts} [User sent an image saved at: ${localPath}]\n\n${caption}`;
-    await processAgentPrompt(ctx, chatId, prompt, `[Photo] ${caption}`);
-  }
+  const photo = ctx.message?.photo?.at(-1);
+  if (photo) await processFile(ctx, photo.file_id, "photo.jpg", "image/jpeg", ctx.message?.caption ?? "What do you see in this image?", "Photo");
 });
-
-// ---------------------------------------------------------------------------
-// Document handler (TG-03)
-// ---------------------------------------------------------------------------
 
 export const handleDocument = withErrorHandling("file", async (ctx) => {
   const doc = ctx.message?.document;
-  const chatId = ctx.chat?.id;
-  if (!doc || !chatId) return;
-
-  const fileName = doc.file_name ?? "document";
-  const localPath = await downloadTelegramFile(doc.file_id, fileName);
-
-  const caption = ctx.message?.caption ?? `I sent you a file: ${fileName}`;
-  const ts = timestamp();
-  const prompt = `${ts} [User sent a file saved at: ${localPath} (filename: ${fileName})]\n\n${caption}`;
-  const mimeType = doc.mime_type ?? "application/octet-stream";
-
-  if (isNativeMultimodal() && canSendInlineToGemini(mimeType)) {
-    const mediaContent = await fileToMediaContent(localPath, mimeType);
-    await processAgentPrompt(ctx, chatId, prompt, `[File: ${fileName}] ${caption}`, [mediaContent]);
-  } else {
-    await processAgentPrompt(ctx, chatId, prompt, `[File: ${fileName}] ${caption}`);
-  }
+  if (!doc) return;
+  const name = doc.file_name ?? "document";
+  await processFile(ctx, doc.file_id, name, doc.mime_type ?? "application/octet-stream", ctx.message?.caption ?? `I sent you a file: ${name}`, `File: ${name}`);
 });
-
-// ---------------------------------------------------------------------------
-// Voice handler (TG-04)
-// ---------------------------------------------------------------------------
 
 export const handleVoice = withErrorHandling("voice message", async (ctx) => {
   const voice = ctx.message?.voice;
-  const chatId = ctx.chat?.id;
-  if (!voice || !chatId) return;
-
-  const localPath = await downloadTelegramFile(voice.file_id, "voice.ogg");
-
-  if (isNativeMultimodal()) {
-    // Send audio inline to Gemini — it understands speech natively
-    const audioContent = await fileToMediaContent(localPath, "audio/ogg");
-    const caption = ctx.message?.caption;
-    const ts = timestamp();
-    const prompt = caption
-      ? `${ts} [User sent a voice message — listen and respond]\n\n${caption}`
-      : `${ts} [User sent a voice message — listen and respond to what they said]`;
-    await processAgentPrompt(ctx, chatId, prompt, "[Voice message]", [audioContent]);
-  } else {
-    // Fallback: transcribe with STT then send as text
-    const transcription = await transcribeAudio(localPath);
-    logger.info("Voice message transcribed", { transcription: transcription.slice(0, 100) });
-
-    const caption = ctx.message?.caption;
-    const ts = timestamp();
-    const prompt = caption
-      ? `${ts} [Voice message transcribed: "${transcription}"]\n\n${caption}`
-      : `${ts} ${transcription}`;
-
-    await processAgentPrompt(ctx, chatId, prompt, transcription);
-  }
+  if (voice) await processFile(ctx, voice.file_id, "voice.ogg", "audio/ogg", ctx.message?.caption ?? "Respond to my voice message.", "Voice message");
 });
-
-// ---------------------------------------------------------------------------
-// Audio handler (TG-05)
-// ---------------------------------------------------------------------------
 
 export const handleAudio = withErrorHandling("audio file", async (ctx) => {
   const audio = ctx.message?.audio;
-  const chatId = ctx.chat?.id;
-  if (!audio || !chatId) return;
-
-  const extension = audio.mime_type?.split("/")[1] ?? "mp3";
-  const mimeType = audio.mime_type ?? "audio/mpeg";
-  const fileName = audio.file_name ?? `audio.${extension}`;
-  const localPath = await downloadTelegramFile(audio.file_id, fileName);
-
-  if (isNativeMultimodal()) {
-    const audioContent = await fileToMediaContent(localPath, mimeType);
-    const caption = ctx.message?.caption ?? `I sent you an audio file: ${fileName}`;
-    const ts = timestamp();
-    const prompt = `${ts} [User sent an audio file: ${fileName} — listen and respond]\n\n${caption}`;
-    await processAgentPrompt(ctx, chatId, prompt, `[Audio: ${fileName}]`, [audioContent]);
-  } else {
-    const transcription = await transcribeAudio(localPath);
-    logger.info("Audio file transcribed", { fileName, transcription: transcription.slice(0, 100) });
-
-    const caption = ctx.message?.caption ?? `I sent you an audio file: ${fileName}`;
-    const ts = timestamp();
-    const prompt = `${ts} [Audio file "${fileName}" transcribed: "${transcription}"]\n\n${caption}`;
-
-    await processAgentPrompt(ctx, chatId, prompt, `[Audio: ${fileName}] ${transcription}`);
-  }
+  if (!audio) return;
+  const name = audio.file_name ?? `audio.${audio.mime_type?.split("/")[1] ?? "mp3"}`;
+  await processFile(ctx, audio.file_id, name, audio.mime_type ?? "audio/mpeg", ctx.message?.caption ?? "Respond to this audio.", `Audio: ${name}`);
 });
-
-// ---------------------------------------------------------------------------
-// Video handler (TG-06)
-// ---------------------------------------------------------------------------
 
 export const handleVideo = withErrorHandling("video", async (ctx) => {
   const video = ctx.message?.video;
-  const chatId = ctx.chat?.id;
-  if (!video || !chatId) return;
-
-  const fileName = video.file_name ?? "video.mp4";
-  const localPath = await downloadTelegramFile(video.file_id, fileName);
-
-  const caption = ctx.message?.caption ?? `I sent you a video: ${fileName}`;
-  const ts = timestamp();
-  const prompt = `${ts} [User sent a video saved at: ${localPath} (filename: ${fileName}, duration: ${video.duration}s)]\n\n${caption}`;
-
-  if (isNativeMultimodal()) {
-    const mediaContent = await fileToMediaContent(localPath, video.mime_type ?? "video/mp4");
-    await processAgentPrompt(ctx, chatId, prompt, `[Video: ${fileName}] ${caption}`, [mediaContent]);
-  } else {
-    await processAgentPrompt(ctx, chatId, prompt, `[Video: ${fileName}] ${caption}`);
-  }
+  if (video) await processFile(ctx, video.file_id, video.file_name ?? "video.mp4", video.mime_type ?? "video/mp4", ctx.message?.caption ?? "Describe this video.", "Video");
 });
-
-// ---------------------------------------------------------------------------
-// Video note handler (TG-07)
-// ---------------------------------------------------------------------------
 
 export const handleVideoNote = withErrorHandling("video note", async (ctx) => {
-  const videoNote = ctx.message?.video_note;
-  const chatId = ctx.chat?.id;
-  if (!videoNote || !chatId) return;
-
-  const localPath = await downloadTelegramFile(videoNote.file_id, "video_note.mp4");
-
-  const ts = timestamp();
-  const prompt = `${ts} [User sent a video note (round video) saved at: ${localPath} (duration: ${videoNote.duration}s)]\n\nI sent you a video note.`;
-
-  if (isNativeMultimodal()) {
-    const mediaContent = await fileToMediaContent(localPath, "video/mp4");
-    await processAgentPrompt(ctx, chatId, prompt, "[Video note]", [mediaContent]);
-  } else {
-    await processAgentPrompt(ctx, chatId, prompt, "[Video note]");
-  }
+  const video = ctx.message?.video_note;
+  if (video) await processFile(ctx, video.file_id, "video_note.mp4", "video/mp4", "Respond to this video note.", "Video note");
 });
-
-// ---------------------------------------------------------------------------
-// Sticker handler (TG-08)
-// ---------------------------------------------------------------------------
 
 export const handleSticker = withErrorHandling("sticker", async (ctx) => {
   const sticker = ctx.message?.sticker;
   const chatId = ctx.chat?.id;
   if (!sticker || !chatId) return;
-
-  const emoji = sticker.emoji ?? "";
-  const setName = sticker.set_name ?? "unknown";
-  const ts = timestamp();
-
-  let prompt: string;
+  const label = `Sticker: ${sticker.emoji ?? ""}, set ${sticker.set_name ?? "unknown"}`;
   if (sticker.is_animated || sticker.is_video) {
-    // Animated/video stickers: metadata only (can't be analyzed without rendering)
-    prompt = `${ts} [User sent a sticker: emoji ${emoji}, from set "${setName}"]`;
-    await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`);
-  } else {
-    // Static stickers: download and include path for visual analysis
-    const localPath = await downloadTelegramFile(sticker.file_id, "sticker.webp");
-    prompt = `${ts} [User sent a sticker saved at: ${localPath} (emoji: ${emoji}, set: "${setName}")]`;
-    if (isNativeMultimodal()) {
-      const mediaContent = await fileToMediaContent(localPath, "image/webp");
-      await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`, [mediaContent]);
-    } else {
-      await processAgentPrompt(ctx, chatId, prompt, `[Sticker: ${emoji}]`);
-    }
+    await processAgentPrompt(ctx, chatId, `${timestamp()} [${label}]`, label);
+    return;
   }
+  await processFile(ctx, sticker.file_id, "sticker.webp", "image/webp", label, "Sticker");
 });

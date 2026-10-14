@@ -1,17 +1,20 @@
-import { describe, expect, test } from "bun:test";
-import { canSendInlineToGemini } from "../lib/mime.ts";
+import { expect, mock, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+mock.module("../lib/transcribe.ts", () => ({ transcribeAudio: async () => "Synthetic voice transcript" }));
+const { prepareAttachment } = await import("../lib/attachment.ts");
 
-describe("canSendInlineToGemini", () => {
-  test("allows native media and PDFs", () => {
-    expect(canSendInlineToGemini("image/jpeg")).toBe(true);
-    expect(canSendInlineToGemini("audio/ogg")).toBe(true);
-    expect(canSendInlineToGemini("video/mp4")).toBe(true);
-    expect(canSendInlineToGemini("application/pdf")).toBe(true);
-  });
-
-  test("rejects archive and generic document MIME types", () => {
-    expect(canSendInlineToGemini("application/zip")).toBe(false);
-    expect(canSendInlineToGemini("application/octet-stream")).toBe(false);
-    expect(canSendInlineToGemini("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).toBe(false);
-  });
+test("sends audio as transcription and leaves unsupported documents on disk", async () => {
+  expect(await prepareAttachment("synthetic.ogg", "audio/ogg")).toEqual({ text: "[Audio transcript]\nSynthetic voice transcript", media: [] });
+  expect(await prepareAttachment("archive.zip", "application/zip")).toEqual({ text: "", media: [] });
+});
+test("loads images for Prem vision without interpreting them as text", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "rachel-attachment-test-"));
+  try {
+    const path = join(dir, "image.png"); await Bun.write(path, "fixture-bytes");
+    const result = await prepareAttachment(path, "image/png");
+    expect(result.text).toBe("");
+    expect(result.media).toEqual([{ type: "media", mimeType: "image/png", data: Buffer.from("fixture-bytes").toString("base64") }]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });

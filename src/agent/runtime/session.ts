@@ -52,6 +52,7 @@ function normalizeMessage(value: unknown): AgentMessage | null {
       usage,
       stopReason: typeof record["stopReason"] === "string" ? record["stopReason"] : undefined,
       errorMessage: typeof record["errorMessage"] === "string" ? record["errorMessage"] : undefined,
+      reasoningContent: typeof record["reasoningContent"] === "string" ? record["reasoningContent"] : undefined,
       toolCalls: Array.isArray(record["toolCalls"])
         ? record["toolCalls"] as Extract<AgentMessage, { role: "assistant" }>["toolCalls"]
         : undefined,

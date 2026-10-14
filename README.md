@@ -1,6 +1,6 @@
 # Rachel9
 
-A personal AI assistant that lives in your Telegram. Rachel9 runs directly on Google's native Gemini SDK, with durable local sessions, persistent memory, tools, skills, media handling, and task scheduling in one Bun process.
+A personal AI assistant that lives in your Telegram. Rachel9 runs directly on Prem’s OpenAI-compatible ZDR API, with durable local sessions, persistent memory, tools, skills, media handling, and task scheduling in one Bun process.
 
 Rachel can read and create documents, search the web, write and run code, schedule tasks, remember things about you, and much more — all through a simple Telegram chat.
 
@@ -13,9 +13,9 @@ Rachel can read and create documents, search the web, write and run code, schedu
 - **Built-in tools** — file I/O, bash, grep, web search, web fetch, Telegram file sending, and more
 - **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, and more
 - **Task scheduler** — cron-based reminders, bash jobs, and autonomous agent tasks
-- **Auto context compaction** — handles long conversations gracefully (180K token window)
-- **Native multimodal Gemini** — forwards Telegram photos and documents directly to the model
-- **Self-contained** — single Bun process, SQLite database, no external services beyond Gemini
+- **Auto context compaction** — handles long conversations gracefully
+- **Media** — Prem Qwen vision for photos; Groq Whisper for voice. PDFs use local text extraction or up to eight scanned pages; videos use six sampled frames and a separate audio transcript.
+- **Self-contained** — single Bun process, SQLite database, Prem for inference and Groq for speech
 
 ## Quick Start
 
@@ -24,7 +24,7 @@ Rachel can read and create documents, search the web, write and run code, schedu
 - [Bun](https://bun.sh) (v1.1+)
 - A Telegram bot token (from [@BotFather](https://t.me/BotFather))
 - Your Telegram user ID (from [@userinfobot](https://t.me/userinfobot))
-- A Google AI Studio API key for Gemini
+- A Prem API key; optionally a Groq key for speech
 
 ### Setup
 
@@ -52,18 +52,20 @@ bun run start
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Bot token from @BotFather |
 | `OWNER_TELEGRAM_USER_ID` | Yes | — | Your Telegram user ID |
 | `SHARED_FOLDER_PATH` | Yes | — | Path for persistent data (memory, database, sessions) |
-| `GEMINI_API_KEY` | Yes | — | Google AI Studio API key |
-| `GEMINI_MODEL` | No | `gemini-3.8-flash` | Override Gemini model name |
+| `PREM_API_KEY` | Yes | — | Prem API key |
+| `PREM_MODEL` | No | `deepseek-v4.1-flash` | Override text model name |
+| `GROQ_API_KEY` | For voice | — | Groq Whisper speech key |
+| `STT_PROVIDER` | No | `groq` | Speech provider (`groq` or `openai`) |
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
-| `THINKING_LEVEL` | No | `dynamic` | `dynamic`, or static Gemini thinking effort: `minimal`, `low`, `medium`, `high` |
+| `THINKING_LEVEL` | No | `dynamic` | `dynamic`, or static thinking effort (minimal/low → DeepSeek low; medium/high → high): `minimal`, `low`, `medium`, `high` |
 
 ## Architecture
 
 ```
 src/
-├── agent/          # Native Gemini runner, tools, compaction, system prompt
-│   ├── llm/        # Gemini SDK adapter + retries
+├── agent/          # Prem ZDR runner, tools, compaction, system prompt
+│   ├── llm/        # Prem JSON adapter + validation
 │   ├── runtime/    # Durable JSONL session storage
 │   └── tools/      # Custom tools: web search, web fetch, telegram file send
 ├── config/         # Environment validation (Zod) and tunable constants
@@ -76,7 +78,7 @@ src/
 └── index.ts        # Entry point — webhook or polling mode
 ```
 
-**Agent**: Uses `@google/genai` directly. The runner stores durable JSONL sessions, calls Gemini with the full retained history, executes tool calls in rounds, and retries transient Gemini errors.
+**Agent**: Calls `https://gateway.prem.io/openai/chat/completions` with DeepSeek V4.1 Flash. The runner stores durable JSONL sessions, retains reasoning for tool continuations, and executes tools in rounds. Legacy Gemini sessions remain readable. Failed or ambiguous inference POSTs are not automatically replayed; there is no Google fallback.
 
 **Memory**: Three layers — `MEMORY.md` (core facts, loaded every message), `daily-logs/` (conversation history), `context/` (deep topic knowledge).
 
@@ -84,7 +86,7 @@ src/
 
 **Skills**: Auto-discovered from `skills/` directory. Each skill has a `SKILL.md` with YAML frontmatter that gets injected into the system prompt. Skills can include their own local scripts and dependency/setup instructions.
 
-**Compaction**: Implemented in `src/agent/compaction.ts` and triggered by `src/agent/runner.ts`. When estimated retained history exceeds `MAX_CONTEXT_TOKENS * COMPACTION_THRESHOLD`, older turns are summarized with Gemini while the most recent turn pairs are kept verbatim.
+**Compaction**: Implemented in `src/agent/compaction.ts` and triggered by `src/agent/runner.ts`. When estimated retained history exceeds `MAX_CONTEXT_TOKENS * COMPACTION_THRESHOLD`, older turns are summarized with the same Prem model while the most recent turn pairs are kept verbatim.
 
 ## Docker
 
@@ -96,12 +98,12 @@ docker run -d \
   -v rachel-data:/data \
   -e TELEGRAM_BOT_TOKEN=... \
   -e OWNER_TELEGRAM_USER_ID=... \
-  -e GEMINI_API_KEY=... \
+  -e PREM_API_KEY=... \
   -e SHARED_FOLDER_PATH=/data \
   rachel9
 ```
 
-The Docker image includes Bun, Python 3, UV, ffmpeg, git, curl, and sudo — enough for Rachel to execute code, create documents, and install skill-specific dependencies inside the container when needed.
+The Docker image includes Bun, Python 3, UV, ffmpeg, poppler-utils, git, curl, and sudo — enough for Rachel to execute code, create documents, and install skill-specific dependencies inside the container when needed.
 
 ### Webhook Mode (Rachel Cloud)
 

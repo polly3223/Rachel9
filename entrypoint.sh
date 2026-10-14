@@ -6,7 +6,7 @@
 # Write secrets to a file only readable by rachel user
 SECRETS_FILE="/tmp/.rachel-secrets"
 cat > "$SECRETS_FILE" <<EOF
-GEMINI_API_KEY=${GEMINI_API_KEY:-}
+PREM_API_KEY=${PREM_API_KEY:-}
 ZAI_API_KEY=${ZAI_API_KEY:-}
 GROQ_API_KEY=${GROQ_API_KEY:-}
 OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -15,6 +15,7 @@ EOF
 chmod 400 "$SECRETS_FILE"
 
 # Unset from environment — child processes won't inherit these
+unset PREM_API_KEY
 unset GEMINI_API_KEY
 unset ZAI_API_KEY
 unset GROQ_API_KEY

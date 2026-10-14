@@ -29,6 +29,7 @@ function startTypingLoop(api: Api, chatId: number): () => void {
 function userFacingAgentError(error: unknown): string {
   const msg = errorMessage(error).toLowerCase();
   if (
+    /prem zdr http (429|5\d\d)/.test(msg) ||
     msg.includes("\"code\":502") ||
     msg.includes("\"code\":503") ||
     msg.includes("\"code\":504") ||
@@ -37,7 +38,7 @@ function userFacingAgentError(error: unknown): string {
     msg.includes("gateway timeout") ||
     msg.includes("temporarily unavailable")
   ) {
-    return "Gemini had a temporary server error while I was working. Some work may already be done - ask me to continue or check what was created.";
+    return "Prem had a temporary server error while I was working. Some work may already be done - ask me to continue or check what was created.";
   }
 
   return "Sorry, something went wrong. Please try again.";
