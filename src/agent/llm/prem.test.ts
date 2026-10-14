@@ -39,7 +39,7 @@ test("interrupted and orphaned tool history remains text without inventing resul
   expect(JSON.stringify(wire)).toContain("results incomplete");
   expect(JSON.stringify(wire)).toContain("saved data");
 });
-test("legacy media stays readable without sending binary to the text model", () => {
+test("legacy unsupported audio stays readable without sending binary to DeepSeek", () => {
   const wire = toPremMessages([{ ...user, content: [{ type: "media", mimeType: "audio/ogg", data: "SECRET_BINARY" }] }]);
   expect(JSON.stringify(wire)).not.toContain("SECRET_BINARY");
   expect(JSON.stringify(wire)).toContain("audio/ogg");
@@ -78,12 +78,27 @@ test("passes cancellation to the request", async () => {
   setFetch(async (_url, options) => { options?.signal?.throwIfAborted(); throw new Error("must not run"); });
   await expect(client.generate([user], [], controller.signal)).rejects.toThrow();
 });
-test("routes images through Prem vision once with no tools or Google fields", async () => {
+test("sends images directly to DeepSeek in the same request as tools", async () => {
   setFetch(async (_url, options) => {
     const body = JSON.parse(String(options?.body));
-    expect(body.model).toBe("qwen38-flash-next"); expect(body.tools).toBeUndefined();
+    expect(body.model).toBe("deepseek-v4.1-flash"); expect(body.tools[0].function.name).toBe("read");
     expect(body.messages[1].content[1].image_url.url).toBe("data:image/png;base64,cGl4ZWw=");
     return Response.json(completion({ content: "A red square." }));
   });
-  expect(await client.describeImages("describe", [{ type: "media", mimeType: "image/png", data: "cGl4ZWw=" }])).toBe("A red square.");
+  const result = await client.generate([{ ...user, content: [...user.content, { type: "media", mimeType: "image/png", data: "cGl4ZWw=" }] }], [{ name: "read", label: "Read", description: "Read a file", parameters: { type: "object" }, execute: async () => ({ content: [] }) }]);
+  expect(result.text).toBe("A red square.");
+});
+
+test("image history survives restart and remains available alongside tool results", () => {
+  const dir = mkdtempSync(join(tmpdir(), "prem-image-session-"));
+  try {
+    const store = new JsonlSessionStore(join(dir, "context.jsonl"));
+    store.append({ ...user, content: [...user.content, { type: "media", mimeType: "image/jpeg", data: "cGl4ZWw=" }] });
+    for (const message of [assistant, tool, user]) store.append(message);
+    const wire = toPremMessages(store.load());
+    expect(wire[0]?.content).toEqual([{ type: "text", text: "test" }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,cGl4ZWw=" } }]);
+    expect(wire[1]?.reasoning_content).toBe("private-reasoning");
+    expect(wire[2]?.tool_call_id).toBe(wire[1]?.tool_calls?.[0]?.id);
+    expect(wire[3]?.role).toBe("user");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

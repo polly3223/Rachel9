@@ -14,7 +14,7 @@ Rachel can read and create documents, search the web, write and run code, schedu
 - **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, and more
 - **Task scheduler** — cron-based reminders, bash jobs, and autonomous agent tasks
 - **Auto context compaction** — handles long conversations gracefully
-- **Media** — Prem Qwen vision for photos; Groq Whisper for voice. PDFs use local text extraction or up to eight scanned pages; videos use six sampled frames and a separate audio transcript.
+- **Media** — DeepSeek V4.1 Flash handles text and images directly through Prem ZDR; Groq Whisper handles voice. PDFs use local text extraction or up to eight scanned pages; videos use six sampled frames and a separate audio transcript.
 - **Self-contained** — single Bun process, SQLite database, Prem for inference and Groq for speech
 
 ## Quick Start

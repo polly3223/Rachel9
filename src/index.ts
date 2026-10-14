@@ -164,7 +164,7 @@ if (isWebhookMode) {
       // Health check endpoint
       if (req.method === "GET" && url.pathname === "/health") {
         const health = getRuntimeHealth();
-        return new Response(JSON.stringify({ ...health, inference: { provider: "prem-zdr", model: env.PREM_MODEL ?? DEFAULT_PREM_MODEL, visionModel: "qwen38-flash-next", speechProvider: env.STT_PROVIDER } }), {
+        return new Response(JSON.stringify({ ...health, inference: { provider: "prem-zdr", model: env.PREM_MODEL ?? DEFAULT_PREM_MODEL, visionModel: env.PREM_MODEL ?? DEFAULT_PREM_MODEL, speechProvider: env.STT_PROVIDER } }), {
           status: health.status === "ok" ? 200 : 503,
           headers: { "Content-Type": "application/json" },
         });
