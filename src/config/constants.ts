@@ -1,4 +1,4 @@
-export const DEFAULT_PREM_MODEL = "deepseek-v4.1-flash";
+export const DEFAULT_PREM_MODEL = "deepseek-v4.1-flash-1017";
 
 /**
  * Central constants file.

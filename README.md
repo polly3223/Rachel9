@@ -14,7 +14,7 @@ Rachel can read and create documents, search the web, write and run code, schedu
 - **Specialized skills** — PDF, Word, Excel, PowerPoint, web design, and more
 - **Task scheduler** — cron-based reminders, bash jobs, and autonomous agent tasks
 - **Auto context compaction** — handles long conversations gracefully
-- **Media** — DeepSeek V4.1 Flash handles text and images directly through Prem ZDR; Groq Whisper handles voice. PDFs use local text extraction or up to eight scanned pages; videos use six sampled frames and a separate audio transcript.
+- **Media** — DeepSeek V4.1 Flash 1017 handles text and images directly through Prem ZDR; Groq Whisper handles voice. PDFs use local text extraction or up to eight scanned pages; videos use six sampled frames and a separate audio transcript.
 - **Self-contained** — single Bun process, SQLite database, Prem for inference and Groq for speech
 
 ## Quick Start
@@ -53,7 +53,7 @@ bun run start
 | `OWNER_TELEGRAM_USER_ID` | Yes | — | Your Telegram user ID |
 | `SHARED_FOLDER_PATH` | Yes | — | Path for persistent data (memory, database, sessions) |
 | `PREM_API_KEY` | Yes | — | Prem API key |
-| `PREM_MODEL` | No | `deepseek-v4.1-flash` | Override text model name |
+| `PREM_MODEL` | No | `deepseek-v4.1-flash-1017` | Override text and image model name |
 | `GROQ_API_KEY` | For voice | — | Groq Whisper speech key |
 | `STT_PROVIDER` | No | `groq` | Speech provider (`groq` or `openai`) |
 | `NODE_ENV` | No | `production` | `development`, `production`, or `test` |
@@ -78,7 +78,7 @@ src/
 └── index.ts        # Entry point — webhook or polling mode
 ```
 
-**Agent**: Calls `https://gateway.prem.io/openai/chat/completions` with DeepSeek V4.1 Flash. The runner stores durable JSONL sessions, retains reasoning for tool continuations, and executes tools in rounds. Legacy Gemini sessions remain readable. Failed or ambiguous inference POSTs are not automatically replayed; there is no Google fallback.
+**Agent**: Calls `https://gateway.prem.io/openai/chat/completions` with DeepSeek V4.1 Flash 1017. The runner stores durable JSONL sessions, retains reasoning for tool continuations, and executes tools in rounds. Legacy Gemini sessions remain readable. Failed or ambiguous inference POSTs are not automatically replayed; there is no Google fallback.
 
 **Memory**: Three layers — `MEMORY.md` (core facts, loaded every message), `daily-logs/` (conversation history), `context/` (deep topic knowledge).
 
